@@ -1,2 +1,6 @@
 Date,Ticker,Shares,Cost Basis,Stop Loss,Current Price,Total Value,PnL,Action,Cash Balance,Total Equity
-
+2025-08-04,MNPR,3,41.75,34.0,41.75,125.25,0.0,HOLD,,
+2025-08-04,TLSA,50,2.45,1.8,2.45,122.5,0.0,HOLD,,
+2025-08-04,VERI,50,2.48,1.8,2.48,124.0,0.0,HOLD,,
+2025-08-04,UAVS,50,2.41,1.8,2.41,120.5,0.0,HOLD,,
+2025-08-04,TOTAL,,,,,492.25,0.0,,7.75,500.0
