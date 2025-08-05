@@ -370,6 +370,22 @@ def show_watchlist_sidebar() -> None:
     sidebar = st.sidebar
     sidebar.header("Ticker Lookup")
 
+    def add_watchlist_and_clear(sym: str, price: float, portfolio_tickers: set[str]) -> None:
+        """Callback to add ``sym`` to the watchlist and reset lookup fields."""
+
+        if sym in st.session_state.watchlist:
+            st.session_state.feedback = ("info", f"{sym} already in watchlist.")
+        elif sym in portfolio_tickers:
+            st.session_state.feedback = ("info", f"{sym} already in portfolio.")
+        else:
+            st.session_state.watchlist.append(sym)
+            st.session_state.watchlist_prices[sym] = price
+            save_watchlist(st.session_state.watchlist)
+            st.session_state.feedback = ("success", f"{sym} added to watchlist.")
+        # Clear field and any error so the next lookup starts fresh.
+        st.session_state.lookup_symbol = ""
+        st.session_state.lookup_error = ""
+
     # Remove any watched tickers that are now held in the portfolio.
     portfolio_tickers = (
         set(st.session_state.portfolio["ticker"].values)
@@ -403,20 +419,12 @@ def show_watchlist_sidebar() -> None:
             ticker_obj = yf.Ticker(sym)
             name = ticker_obj.info.get("shortName") or ticker_obj.info.get("longName") or sym
             sidebar.write(f"{name}: ${price:.2f}")
-            if sidebar.button("Add to Watchlist", key="add_watchlist"):
-                if sym in st.session_state.watchlist:
-                    st.session_state.feedback = ("info", f"{sym} already in watchlist.")
-                elif sym in portfolio_tickers:
-                    st.session_state.feedback = ("info", f"{sym} already in portfolio.")
-                else:
-                    st.session_state.watchlist.append(sym)
-                    st.session_state.watchlist_prices[sym] = price
-                    save_watchlist(st.session_state.watchlist)
-                    st.session_state.feedback = ("success", f"{sym} added to watchlist.")
-                # Clear field and any error so the next lookup starts fresh.
-                st.session_state.lookup_symbol = ""
-                st.session_state.lookup_error = ""
-                st.rerun()
+            sidebar.button(
+                "Add to Watchlist",
+                key="add_watchlist",
+                on_click=add_watchlist_and_clear,
+                args=(sym, price, portfolio_tickers),
+            )
     else:
         # No symbol entered: clear any stale errors.
         st.session_state.lookup_error = ""
