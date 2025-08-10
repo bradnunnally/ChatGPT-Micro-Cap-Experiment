@@ -49,7 +49,7 @@ def navbar(active_page: str) -> None:
         unsafe_allow_html=True,
     )
 
-    st.title("AI Assisted Trading")
+    st.title("AI Assisted Trading(DEV)")
 
     nav = st.container()
     with nav:

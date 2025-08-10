@@ -2,10 +2,4 @@
 # No theme section = pure system default
 # Uncomment the [theme] section below if you want custom colors
 
-# [theme]
-# Use "light" or "dark" for base theme, or omit for system default
-# base = "light"  # Set to "light" or "dark" to override system default
-# primaryColor = "#2A9D8F"
-# backgroundColor = "#FFFFFF"
-# secondaryBackgroundColor = "#f6f0f3ff"
-# textColor = "#000000"
+
