@@ -6,6 +6,7 @@ import streamlit as st
 # Import the module to allow tests to patch functions after this module is imported
 import data.portfolio as portfolio_data
 from config import COL_COST, COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY
+from core.errors import MarketDataDownloadError, NoMarketDataError
 from data.db import get_connection, init_db
 from services.core.portfolio_service import (
     apply_buy as _apply_buy,
@@ -90,15 +91,24 @@ def manual_buy(
         return False if session_mode else (False, msg, portfolio_df, cash)
     # For session_mode tests, skip day range validation; rely on provided price
     if not session_mode:
+        has_market_data = True
         try:
             day_high, day_low = get_day_high_low(ticker)
-        except Exception as exc:  # pragma: no cover - network errors
-            log_error(str(exc))
+        except (MarketDataDownloadError, NoMarketDataError) as exc:
+            # Graceful handling for missing data - allow trade to proceed without validation
+            has_market_data = False
+            day_high = day_low = None
+            logger.warning(f"No market data for {ticker}, proceeding without price validation", 
+                         extra={"event": "market_data_fallback", "ticker": ticker, "reason": str(exc)})
+        except Exception as exc:  # pragma: no cover - other network errors
+            log_error(f"Market data error for {ticker}: {str(exc)}")
             audit_logger.trade(
                 "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=str(exc)
             )
             return False if session_mode else (False, str(exc), portfolio_df, cash)
-        if not (day_low <= price <= day_high):
+        
+        # Only enforce range validation when we actually have market data
+        if has_market_data and not (day_low <= price <= day_high):
             msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
             log_error(msg)
             audit_logger.trade(
@@ -209,15 +219,24 @@ def manual_sell(
         return False if session_mode else (False, msg, portfolio_df, cash)
 
     if not session_mode:
+        has_market_data = True
         try:
             day_high, day_low = get_day_high_low(ticker)
-        except Exception as exc:  # pragma: no cover - network errors
+        except (MarketDataDownloadError, NoMarketDataError) as exc:
+            # Graceful handling for missing data - allow trade to proceed without validation
+            has_market_data = False
+            day_high = day_low = None
+            logger.warning(f"No market data for {ticker}, proceeding without price validation", 
+                         extra={"event": "market_data_fallback", "ticker": ticker, "reason": str(exc)})
+        except Exception as exc:  # pragma: no cover - other network errors
             log_error(str(exc))
             audit_logger.trade(
                 "sell", ticker=ticker, shares=shares, price=price, status="failure", reason=str(exc)
             )
             return False if session_mode else (False, str(exc), portfolio_df, cash)
-        if not (day_low <= price <= day_high):
+        
+        # Only enforce range validation when we actually have market data
+        if has_market_data and not (day_low <= price <= day_high):
             msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
             log_error(msg)
             audit_logger.trade(

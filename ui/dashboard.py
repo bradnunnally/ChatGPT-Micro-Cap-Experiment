@@ -12,6 +12,7 @@ from services.session import init_session_state
 from services.time import TradingCalendar, get_clock
 from ui.cash import show_cash_section
 from ui.forms import show_buy_form, show_sell_form
+from ui.manual_pricing import show_manual_pricing_section, show_api_status_warning
 from ui.summary import build_daily_summary
 
 
@@ -305,6 +306,13 @@ def render_dashboard() -> None:
                 column_config=column_config,
                 hide_index=True,
             )
+
+        # Check if all portfolio positions have zero current prices (API issues)
+        if not port_table.empty and all(port_table.get("Current Price", [1]) == 0):
+            show_api_status_warning()
+        
+        # Manual pricing section for when APIs fail
+        show_manual_pricing_section()
 
         show_buy_form()
         if not port_table.empty:

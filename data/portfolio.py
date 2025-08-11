@@ -60,6 +60,7 @@ def load_portfolio():
             prices_df = fetch_prices(portfolio[COL_TICKER].tolist())
         except Exception:
             prices_df = pd.DataFrame(columns=["ticker", "current_price", "pct_change"])
+        
         if not prices_df.empty:
             portfolio = portfolio.merge(
                 prices_df[["ticker", "current_price", "pct_change"]],
@@ -67,7 +68,25 @@ def load_portfolio():
                 how="left",
             )
         else:
-            portfolio["current_price"] = 0.0
+            # If bulk fetch failed, try individual price lookups
+            from services.market import get_current_price
+            import logging
+            
+            logger = logging.getLogger(__name__)
+            logger.info("Bulk price fetch failed in load_portfolio, attempting individual lookups")
+            
+            current_prices = []
+            for ticker in portfolio[COL_TICKER].tolist():
+                try:
+                    price = get_current_price(ticker)
+                    current_prices.append(price if price is not None else 0.0)
+                    if price is not None:
+                        logger.info(f"Individual price loaded for {ticker}: ${price}")
+                except Exception as e:
+                    logger.warning(f"Individual price fetch failed for {ticker}: {e}")
+                    current_prices.append(0.0)
+            
+            portfolio["current_price"] = current_prices
             portfolio["pct_change"] = 0.0
     else:
         # Ensure columns exist even when empty
@@ -97,8 +116,11 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
     """
 
     tickers = portfolio_df[COL_TICKER].tolist()
+    
+    # Try bulk fetch first
     data = fetch_prices(tickers)
     prices: dict[str, float] = {t: 0.0 for t in tickers}
+    
     if not data.empty:
         if isinstance(data.columns, pd.MultiIndex):
             close = data["Close"].iloc[-1]
@@ -114,6 +136,33 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
             val = data.get("Close", pd.Series([None])).iloc[-1]
             if tickers and not pd.isna(val):
                 prices[tickers[0]] = float(val)
+    
+    # If bulk fetch failed or returned empty prices, try individual fallback
+    if all(price == 0.0 for price in prices.values()) and tickers:
+        from services.market import get_current_price
+        from services.manual_pricing import get_manual_price
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        logger.info("Bulk price fetch failed, attempting individual price lookups with manual fallback")
+        
+        for ticker in tickers:
+            # First try manual pricing override
+            manual_price = get_manual_price(ticker)
+            if manual_price is not None:
+                prices[ticker] = float(manual_price)
+                logger.info(f"Using manual price for {ticker}: ${manual_price}")
+                continue
+            
+            # If no manual price, try API
+            try:
+                individual_price = get_current_price(ticker)
+                if individual_price is not None and individual_price > 0:
+                    prices[ticker] = float(individual_price)
+                    logger.info(f"Successfully fetched individual price for {ticker}: ${individual_price}")
+            except Exception as e:
+                logger.warning(f"Individual price fetch failed for {ticker}: {e}")
+                # Keep the 0.0 default
 
     df = _compute_snapshot(
         portfolio_df.rename(
