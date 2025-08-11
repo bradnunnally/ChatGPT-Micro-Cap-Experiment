@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 import pandas as pd
 import streamlit as st
@@ -7,6 +8,7 @@ import streamlit as st
 import data.portfolio as portfolio_data
 from config import COL_COST, COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY
 from data.db import get_connection, init_db
+from services.core.repository import PortfolioRepository
 from services.core.validation import (
     validate_shares as _core_validate_shares,
 )
@@ -47,6 +49,7 @@ def manual_buy(
     stop_loss: float,
     portfolio_df: pd.DataFrame | None = None,
     cash: float | None = None,
+    repo: Optional[PortfolioRepository] | None = None,
 ) -> bool | tuple[bool, str, pd.DataFrame, float]:
     """Execute a manual buy and update portfolio and logs.
 
@@ -95,7 +98,13 @@ def manual_buy(
             "PnL": 0.0,
             "Reason": "MANUAL BUY - New position",
         }
-        append_trade_log(log)
+        if repo is not None:
+            try:
+                repo.append_trade_log(log)
+            except Exception as exc:  # pragma: no cover
+                log_error(str(exc))
+        else:
+            append_trade_log(log)
 
     mask = portfolio_df[COL_TICKER] == ticker
     if not mask.any():
@@ -121,8 +130,15 @@ def manual_buy(
         portfolio_df.at[idx, COL_STOP] = stop_loss
 
     cash -= cost
-    # Call through module to respect test patches on data.portfolio.save_portfolio_snapshot
-    portfolio_data.save_portfolio_snapshot(portfolio_df, cash)
+    # Persist snapshot via repository when provided; otherwise defer to data.portfolio
+    if repo is not None:
+        try:
+            repo.save_snapshot(portfolio_df, cash)
+        except Exception as exc:  # pragma: no cover
+            log_error(str(exc))
+    else:
+        # Call through module to respect test patches on data.portfolio.save_portfolio_snapshot
+        portfolio_data.save_portfolio_snapshot(portfolio_df, cash)
     msg = f"Bought {shares} shares of {ticker} at ${price:.2f}."
     if session_mode:
         st.session_state.portfolio = portfolio_df
@@ -137,6 +153,7 @@ def manual_sell(
     price: float,
     portfolio_df: pd.DataFrame | None = None,
     cash: float | None = None,
+    repo: Optional[PortfolioRepository] | None = None,
 ) -> bool | tuple[bool, str, pd.DataFrame, float]:
     """Execute a manual sell and update portfolio and logs.
 
@@ -191,7 +208,13 @@ def manual_sell(
             "Shares Sold": shares,
             "Sell Price": price,
         }
-        append_trade_log(log)
+        if repo is not None:
+            try:
+                repo.append_trade_log(log)
+            except Exception as exc:  # pragma: no cover
+                log_error(str(exc))
+        else:
+            append_trade_log(log)
 
     if shares == total_shares:
         portfolio_df = portfolio_df[portfolio_df[COL_TICKER] != ticker]
@@ -201,8 +224,15 @@ def manual_sell(
         portfolio_df.at[idx, COL_COST] = portfolio_df.at[idx, COL_SHARES] * buy_price
 
     cash += price * shares
-    # Call through module to respect test patches on data.portfolio.save_portfolio_snapshot
-    portfolio_data.save_portfolio_snapshot(portfolio_df, cash)
+    # Persist snapshot via repository when provided; otherwise defer to data.portfolio
+    if repo is not None:
+        try:
+            repo.save_snapshot(portfolio_df, cash)
+        except Exception as exc:  # pragma: no cover
+            log_error(str(exc))
+    else:
+        # Call through module to respect test patches on data.portfolio.save_portfolio_snapshot
+        portfolio_data.save_portfolio_snapshot(portfolio_df, cash)
     msg = f"Sold {shares} shares of {ticker} at ${price:.2f}."
     if session_mode:
         st.session_state.portfolio = portfolio_df

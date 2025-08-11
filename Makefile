@@ -18,6 +18,15 @@ test:
 run:
 	. .venv/bin/activate && python -m streamlit run app.py
 
+migrate:
+	. .venv/bin/activate && python apply_migrations.py
+
+backup:
+	. .venv/bin/activate && python scripts/backup_db.py
+
+restore:
+	. .venv/bin/activate && python scripts/restore_db.py $(BACKUP)
+
 audit:
 	python3 -m venv .venv || true
 	. .venv/bin/activate && python -m pip install -U pip

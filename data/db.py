@@ -68,6 +68,13 @@ def get_connection():
     # Ensure the data directory exists
     Path(settings.paths.data_dir).mkdir(parents=True, exist_ok=True)
     raw = sqlite3.connect(str(DB_FILE))
+    # Enable WAL and adjust sync for better concurrency and durability trade-offs
+    try:
+        raw.execute("PRAGMA journal_mode=WAL;")
+        raw.execute("PRAGMA synchronous=NORMAL;")
+        raw.execute("PRAGMA busy_timeout=3000;")
+    except Exception:
+        pass
 
     # If the returned object already supports context management (real connection or test-provided),
     # return it directly.

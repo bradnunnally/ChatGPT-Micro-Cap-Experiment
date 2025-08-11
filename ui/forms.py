@@ -137,6 +137,7 @@ def show_buy_form(ticker_default: str = "") -> None:
                 stop_loss,
                 st.session_state.portfolio,
                 st.session_state.cash,
+                repo=st.session_state.get("repo"),
             )
             if ok:
                 st.session_state.portfolio = port
@@ -251,6 +252,7 @@ def show_sell_form() -> None:
                 price_float,
                 st.session_state.portfolio,
                 st.session_state.cash,
+                repo=st.session_state.get("repo"),
             )
             if ok:
                 st.session_state.portfolio = port
