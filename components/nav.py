@@ -23,8 +23,10 @@ def navbar(active_page: str) -> None:
         """
         <style>
 
-            section[data-testid="stSidebar"] { display: none; }
-             button[aria-label="Main menu"] { display: none; }
+            /* Hide sidebar and hamburger */
+            section[data-testid="stSidebar"] { display: none !important; }
+            div[data-testid="stSidebarNav"] { display: none !important; }
+            button[aria-label="Main menu"] { display: none !important; }
 
             .nav-container {
                 display: flex;
