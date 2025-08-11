@@ -52,6 +52,15 @@ SCHEMA_STATEMENTS = [
         total_equity REAL
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        payload TEXT
+    );
+    """,
 ]
 
 # Backward-compat schema string for tests that import SCHEMA
