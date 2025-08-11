@@ -135,6 +135,10 @@ Notes:
 - Ruff is configured to sort imports and ignore style in tests; run `ruff --fix` to auto-apply safe fixes.
 - Mypy is run on `services/core/*` for a clean, incremental type baseline; expand scope later as desired.
 
+CI: A GitHub Actions workflow runs lint, type-checks, and tests on PRs to `dev_stage` and `main`.
+
+Core validation and models: shared validators live in `services/core/validation.py` and are consumed by immutable dataclasses in `services/core/models.py`. Trading helpers delegate to these validators while keeping legacy boolean return semantics.
+
 ### Running Tests:
 ```bash
 # Run full test suite

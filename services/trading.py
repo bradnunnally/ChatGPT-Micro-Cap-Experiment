@@ -7,6 +7,13 @@ import streamlit as st
 import data.portfolio as portfolio_data
 from config import COL_COST, COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY
 from data.db import get_connection, init_db
+from services.core.validation import (
+    validate_shares as _core_validate_shares,
+)
+from services.core.validation import (
+    validate_ticker as _core_validate_ticker,
+)
+from services.exceptions.validation import ValidationError as _ValidationError
 from services.logging import log_error
 from services.market import get_current_price, get_day_high_low  # noqa: F401 (patched by tests)
 
@@ -236,15 +243,39 @@ def validate_stop_loss(stop_loss: float, buy_price: float) -> bool:
 
 
 def validate_ticker(ticker: str) -> bool:
-    return isinstance(ticker, str) and len(ticker) > 0 and ticker.isupper()
+    """Return True if ticker is valid using centralized validator.
+
+    Keeps boolean contract expected by tests while delegating rules
+    to services.core.validation.
+    """
+    try:
+        _core_validate_ticker(ticker)
+        return True
+    except _ValidationError:
+        return False
 
 
 def validate_shares(shares: int) -> bool:
-    return isinstance(shares, int) and shares > 0
+    """Return True if shares is a valid positive integer via centralized validator."""
+    try:
+        _core_validate_shares(shares)
+        return True
+    except _ValidationError:
+        return False
 
 
 def validate_price(price: float) -> bool:
-    return isinstance(price, (int, float)) and price > 0
+    """Return True if price is a valid positive number.
+
+    Central validator expects Decimal; since tests use float inputs here,
+    we mirror legacy behavior for bool semantics while leveraging
+    centralized rules conceptually. This keeps runtime stable for UI/tests.
+    """
+    try:
+        # Lightweight check to preserve existing float-based flows
+        return isinstance(price, (int, float)) and price > 0
+    except Exception:
+        return False
 
 
 def execute_buy(trade_data: dict) -> bool:

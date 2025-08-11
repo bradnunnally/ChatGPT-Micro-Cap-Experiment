@@ -1,22 +1,22 @@
 repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.7
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
   - repo: https://github.com/psf/black
     rev: 24.4.2
     hooks:
       - id: black
-        args: ["--line-length=100"]
-
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.5.0
-    hooks:
-      - id: ruff
-        args: ["--fix"]
-
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.10.0
     hooks:
       - id: mypy
-        additional_dependencies: [
-          types-requests,
-          pydantic,
-          pydantic-settings,
-        ]
+        args: ["--config-file", "pyproject.toml"]
+        additional_dependencies: []
+  - repo: https://github.com/pycqa/docformatter
+    rev: v1.7.5
+    hooks:
+      - id: docformatter
+        args: ["--in-place", "--wrap-summaries", "88", "--wrap-descriptions", "88"]
