@@ -5,6 +5,7 @@ from typing import Dict, Callable, Any
 import pandas as pd
 import streamlit as st
 import yfinance as yf
+from core.errors import MarketDataDownloadError, NoMarketDataError
 
 from services.logging import log_error, get_logger
 logger = get_logger(__name__)
@@ -110,9 +111,11 @@ def get_day_high_low(ticker: str) -> tuple[float, float]:
     try:
         data = yf.download(ticker, period="1d", progress=False)
     except Exception:
-        raise RuntimeError("Data download failed")
+        # Keep message stable for tests; subclass of RuntimeError per acceptance tests
+        raise MarketDataDownloadError("Data download failed")
     if data.empty:
-        raise ValueError("No market data available.")
+        # Keep message stable for tests; subclass of ValueError per acceptance tests
+        raise NoMarketDataError("No market data available.")
     return float(data["High"].iloc[-1]), float(data["Low"].iloc[-1])
 
 

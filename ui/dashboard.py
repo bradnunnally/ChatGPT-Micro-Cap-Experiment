@@ -10,6 +10,7 @@ from services.session import init_session_state
 from ui.cash import show_cash_section
 from ui.forms import show_buy_form, show_sell_form
 from ui.summary import build_daily_summary
+from core.errors import ValidationError
 
 
 def fmt_currency(val: float) -> str:
@@ -102,8 +103,8 @@ def render_dashboard() -> None:
             try:
                 start_cash = float(start_cash_raw)
                 if start_cash <= 0:
-                    raise ValueError
-            except ValueError:
+                    raise ValidationError("Starting cash must be positive.")
+            except ValidationError:
                 st.session_state.feedback = (
                     "error",
                     "Please enter a positive number.",

@@ -160,7 +160,41 @@ pytest tests/test_portfolio_manager.py
 - **Modular Architecture** - Clean separation of concerns
 - **Error Handling** - Robust error handling and user feedback
 
-## 🔧 Configuration
+## � Logging & Errors
+
+This project emits structured JSON logs to stdout for easy ingestion and analysis.
+
+- Format: one JSON object per line, including timestamp, level, message, logger, and correlation_id.
+- Correlation ID: a stable ID is set per Streamlit session; CLI tools generate a new one per run. You can also set a temporary ID via a context manager for specific actions.
+- Audit Trail: trades and domain events are recorded via an audit logger for traceability.
+
+Key APIs
+- Logging helpers live in `infra/logging.py`:
+    - `get_logger(name)`: standard JSON logger
+    - `get_correlation_id()`, `set_correlation_id(cid)`, `new_correlation_id()`
+    - `audit.trade(action, *, ticker, shares, price, status="success", reason=None, **extra)`
+    - `audit.event(name, **attrs)`
+
+Domain Errors
+- Centralized in `core/errors.py` and used across services/UI/CLI:
+    - `ValidationError` (subclasses `ValueError`) – invalid user/model input
+    - `MarketDataDownloadError` (subclasses `RuntimeError`) – download failures
+    - `NoMarketDataError` (subclasses `ValueError`) – no market data available
+    - `RepositoryError` (subclasses `RuntimeError`) – DB/repository failures
+    - `ConfigError`, `NotFoundError`, `PermissionError` – additional categories
+- Legacy shim: `services/exceptions/validation.ValidationError` aliases `core.errors.ValidationError` for backward compatibility.
+
+Usage conventions
+- Always raise domain-specific exceptions from services.
+- UI/CLI layers should catch domain errors, log them (JSON), surface user-friendly messages, and avoid raw tracebacks in logs.
+- Streamlit app seeds a session-level `correlation_id` so logs from interactions can be traced end-to-end.
+
+Example patterns (conceptual)
+- Create a logger: `logger = get_logger(__name__)`
+- Emit audit entry: `audit.trade("buy", ticker="AAPL", shares=10, price=150.0, status="success")`
+- Set a scoped correlation ID in scripts: `with new_correlation_id(): ...`
+
+## �🔧 Configuration
 
 The application uses SQLite for data storage in the `data/` directory. Configuration options are available in:
 - `.streamlit/config.toml` - Streamlit app configuration and theming

@@ -1,4 +1,6 @@
-class ValidationError(ValueError):
-    """Raised when validation fails for user or model inputs."""
+from core.errors import ValidationError as _ValidationError
 
+
+class ValidationError(_ValidationError):
+    """Compatibility shim for legacy imports."""
     pass

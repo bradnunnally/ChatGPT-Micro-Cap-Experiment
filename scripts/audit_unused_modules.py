@@ -171,16 +171,22 @@ def main() -> None:
     reachable_app_pages = sorted(app_seen | page_seen)
 
     def pp(title: str, items: List[str]) -> None:
-        print(f"\n{title}:")
-        if not items:
-            print("  - (none)")
-            logger.info(title, extra={"event": "audit_unused_modules", "items": []})
-            return
-        for m in items:
-            print(f"  - {m} -> {mods[m].path}")
-        logger.info(title, extra={"event": "audit_unused_modules", "items": items})
+        # JSON-only: emit results as a single structured record
+        logger.info(
+            title,
+            extra={
+                "event": "audit_unused_modules",
+                "title": title,
+                "items": [
+                    {"module": m, "path": str(mods[m].path)} for m in items
+                ],
+            },
+        )
 
-    print("Entry modules:")
+    logger.info(
+        "Entry modules",
+        extra={"event": "audit_unused_modules", "section": "entry_modules"},
+    )
     pp("App entries", sorted(app_entries))
     pp("Page entries (Streamlit)", sorted(page_entries))
     pp("Test entries", sorted(test_entries))
