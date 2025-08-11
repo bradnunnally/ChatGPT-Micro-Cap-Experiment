@@ -16,8 +16,11 @@ from services.core.validation import (
     validate_ticker as _core_validate_ticker,
 )
 from services.exceptions.validation import ValidationError as _ValidationError
-from services.logging import log_error
+from services.logging import log_error, audit_logger, get_logger
 from services.market import get_current_price, get_day_high_low  # noqa: F401 (patched by tests)
+
+
+logger = get_logger(__name__)
 
 
 def append_trade_log(log: dict) -> None:
@@ -69,6 +72,7 @@ def manual_buy(
     if shares <= 0 or price <= 0:
         msg = "Shares and price must be positive."
         log_error(msg)
+        audit_logger.trade("buy", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
         return (False if session_mode else (False, msg, portfolio_df, cash))
     # For session_mode tests, skip day range validation; rely on provided price
     if not session_mode:
@@ -76,16 +80,20 @@ def manual_buy(
             day_high, day_low = get_day_high_low(ticker)
         except Exception as exc:  # pragma: no cover - network errors
             log_error(str(exc))
+            audit_logger.trade("buy", ticker=ticker, shares=shares, price=price, status="failure", reason=str(exc))
             return (False if session_mode else (False, str(exc), portfolio_df, cash))
         if not (day_low <= price <= day_high):
             msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
             log_error(msg)
+            audit_logger.trade("buy", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
             return (False if session_mode else (False, msg, portfolio_df, cash))
 
     cost = price * shares
     if cost > cash:
-        log_error("Insufficient cash for this trade.")
-        return (False if session_mode else (False, "Insufficient cash for this trade.", portfolio_df, cash))
+        reason = "Insufficient cash for this trade."
+        log_error(reason)
+        audit_logger.trade("buy", ticker=ticker, shares=shares, price=price, status="failure", reason=reason)
+        return (False if session_mode else (False, reason, portfolio_df, cash))
 
     # Record trade log only in full app mode
     if not session_mode:
@@ -103,6 +111,7 @@ def manual_buy(
                 repo.append_trade_log(log)
             except Exception as exc:  # pragma: no cover
                 log_error(str(exc))
+                logger.exception("Repository append_trade_log failed", extra={"event": "trade_log", "action": "buy", "ticker": ticker})
         else:
             append_trade_log(log)
 
@@ -136,6 +145,7 @@ def manual_buy(
             repo.save_snapshot(portfolio_df, cash)
         except Exception as exc:  # pragma: no cover
             log_error(str(exc))
+            logger.exception("Repository save_snapshot failed", extra={"event": "snapshot", "phase": "buy", "ticker": ticker})
     else:
         # Call through module to respect test patches on data.portfolio.save_portfolio_snapshot
         portfolio_data.save_portfolio_snapshot(portfolio_df, cash)
@@ -143,7 +153,9 @@ def manual_buy(
     if session_mode:
         st.session_state.portfolio = portfolio_df
         st.session_state.cash = cash
+        audit_logger.trade("buy", ticker=ticker, shares=shares, price=price, status="success")
         return True
+    audit_logger.trade("buy", ticker=ticker, shares=shares, price=price, status="success")
     return True, msg, portfolio_df, cash
 
 
@@ -168,10 +180,12 @@ def manual_sell(
     if shares <= 0 or price <= 0:
         msg = "Shares and price must be positive."
         log_error(msg)
+        audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
         return (False if session_mode else (False, msg, portfolio_df, cash))
     if ticker not in portfolio_df[COL_TICKER].values:
         msg = "Ticker not in portfolio."
         log_error(msg)
+        audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
         return (False if session_mode else (False, msg, portfolio_df, cash))
 
     if not session_mode:
@@ -179,10 +193,12 @@ def manual_sell(
             day_high, day_low = get_day_high_low(ticker)
         except Exception as exc:  # pragma: no cover - network errors
             log_error(str(exc))
+            audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="failure", reason=str(exc))
             return (False if session_mode else (False, str(exc), portfolio_df, cash))
         if not (day_low <= price <= day_high):
             msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
             log_error(msg)
+            audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
             return (False if session_mode else (False, msg, portfolio_df, cash))
 
     row = portfolio_df[portfolio_df[COL_TICKER] == ticker].iloc[0]
@@ -190,6 +206,7 @@ def manual_sell(
     if shares > total_shares:
         msg = f"Trying to sell {shares} shares but only own {total_shares}."
         log_error(msg)
+        audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
         return (False if session_mode else (False, msg, portfolio_df, cash))
 
     buy_price = float(row[COL_PRICE])
@@ -213,6 +230,7 @@ def manual_sell(
                 repo.append_trade_log(log)
             except Exception as exc:  # pragma: no cover
                 log_error(str(exc))
+                logger.exception("Repository append_trade_log failed", extra={"event": "trade_log", "action": "sell", "ticker": ticker})
         else:
             append_trade_log(log)
 
@@ -230,6 +248,7 @@ def manual_sell(
             repo.save_snapshot(portfolio_df, cash)
         except Exception as exc:  # pragma: no cover
             log_error(str(exc))
+            logger.exception("Repository save_snapshot failed", extra={"event": "snapshot", "phase": "sell", "ticker": ticker})
     else:
         # Call through module to respect test patches on data.portfolio.save_portfolio_snapshot
         portfolio_data.save_portfolio_snapshot(portfolio_df, cash)
@@ -237,7 +256,9 @@ def manual_sell(
     if session_mode:
         st.session_state.portfolio = portfolio_df
         st.session_state.cash = cash
+        audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="success")
         return True
+    audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="success")
     return True, msg, portfolio_df, cash
 
 

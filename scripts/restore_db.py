@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 from app_settings import settings
+from infra.logging import get_logger, new_correlation_id
 
 
 def restore(backup_path: str) -> None:
@@ -28,7 +29,10 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: restore_db.py /path/to/backup.sqlite")
+        logger = get_logger(__name__)
+        logger.error("Usage: restore_db.py /path/to/backup.sqlite", extra={"event": "db_restore", "status": "usage_error"})
         raise SystemExit(2)
-    restore(sys.argv[1])
-    print("Restore complete")
+    logger = get_logger(__name__)
+    with new_correlation_id():
+        restore(sys.argv[1])
+        logger.info("Restore complete", extra={"event": "db_restore", "status": "success", "backup": sys.argv[1]})

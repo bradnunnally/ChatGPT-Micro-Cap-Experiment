@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app_settings import settings
+from infra.logging import get_logger, new_correlation_id
 
 
 def backup(dst_dir: str | None = None) -> Path:
@@ -26,5 +27,7 @@ def backup(dst_dir: str | None = None) -> Path:
 
 
 if __name__ == "__main__":
-    path = backup()
-    print(f"Backup created at: {path}")
+    logger = get_logger(__name__)
+    with new_correlation_id():
+        path = backup()
+        logger.info("Backup created", extra={"event": "db_backup", "path": str(path)})

@@ -6,7 +6,8 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-from services.logging import log_error
+from services.logging import log_error, get_logger
+logger = get_logger(__name__)
 
 
 def _retry(fn: Callable[[], Any], attempts: int = 3, base_delay: float = 0.3) -> Any:
@@ -49,6 +50,7 @@ def fetch_price(ticker: str) -> float | None:
 
     if had_exception:
         log_error(f"Failed to fetch price for {ticker}")
+        logger.error("Failed to fetch price", extra={"event": "market_price", "ticker": ticker})
     return None
 
 
@@ -67,6 +69,7 @@ def fetch_prices(tickers: list[str]) -> pd.DataFrame:
     except Exception:
         # On exception, return empty and log once to satisfy tests
         log_error(f"Failed to fetch prices for {', '.join(tickers)}")
+        logger.error("Failed to fetch prices", extra={"event": "market_prices", "tickers": tickers})
         return pd.DataFrame(columns=["ticker", "current_price", "pct_change"]) 
 
     results = []
@@ -126,6 +129,7 @@ def get_current_price(ticker: str) -> float | None:
             data = yf.download(ticker, period="1d", progress=False, auto_adjust=True)
     except Exception as e:
         log_error(f"Error getting price for {ticker}: {e}")
+        logger.error("Error getting price", extra={"event": "market_price", "ticker": ticker, "error": str(e)})
         return None
     if data.empty or "Close" not in data.columns:
         return None

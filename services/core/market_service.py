@@ -2,7 +2,8 @@ from typing import Optional
 
 import yfinance as yf
 
-from services.logging import logger
+from services.logging import get_logger
+logger = get_logger(__name__)
 
 
 class MarketService:

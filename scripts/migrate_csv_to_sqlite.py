@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
 # Use the central settings and DB helpers
 from app_settings import settings
 from data.db import get_connection, init_db
+from infra.logging import get_logger, new_correlation_id
 
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -252,12 +253,18 @@ def main():
     to_backup = [Path(args.portfolio_csv), Path(args.trade_log_csv)]
     copied = backup_files(to_backup, Path(args.backup_dir))
 
-    # Summary output
-    print("Migration complete.")
-    for name, res in results.items():
-        print(f"- {name}: {res}")
-    print(f"Backups created: {[str(p) for p in copied]}")
+    # Summary output (JSON)
+    logger = get_logger(__name__)
+    logger.info(
+        "Migration complete",
+        extra={
+            "event": "csv_to_sqlite_migration",
+            "results": results,
+            "backups": [str(p) for p in copied],
+        },
+    )
 
 
 if __name__ == "__main__":
-    main()
+    with new_correlation_id():
+        main()

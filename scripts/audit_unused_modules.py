@@ -5,6 +5,7 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
+from infra.logging import get_logger, new_correlation_id
 
 IGNORE_DIRS = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".vscode", "build", "dist"}
 
@@ -146,6 +147,7 @@ def reachable(graph: Dict[str, Set[str]], roots: Set[str]) -> Set[str]:
     return seen
 
 def main() -> None:
+    logger = get_logger(__name__)
     ap = argparse.ArgumentParser(description="Classify Python modules by reachability (app/pages/tests/scripts).")
     ap.add_argument("--root", default=".", help="Project root")
     ap.add_argument("--entry", action="append", help="App entry file(s), relative to root (repeatable)")
@@ -172,9 +174,11 @@ def main() -> None:
         print(f"\n{title}:")
         if not items:
             print("  - (none)")
+            logger.info(title, extra={"event": "audit_unused_modules", "items": []})
             return
         for m in items:
             print(f"  - {m} -> {mods[m].path}")
+        logger.info(title, extra={"event": "audit_unused_modules", "items": items})
 
     print("Entry modules:")
     pp("App entries", sorted(app_entries))
@@ -188,4 +192,5 @@ def main() -> None:
     pp("Unreachable (candidates for legacy removal)", unreachable)
 
 if __name__ == "__main__":
-    main()
+    with new_correlation_id():
+        main()

@@ -19,6 +19,7 @@ import sys
 import trace
 
 import pytest
+from infra.logging import get_logger, new_correlation_id
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -77,20 +78,38 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    results = run_tests()
-    totals, coverage_pct = compute_coverage(results)
+    logger = get_logger(__name__)
+    with new_correlation_id():
+        results = run_tests()
+        totals, coverage_pct = compute_coverage(results)
 
-    for filename, (executed, total) in sorted(totals.items()):
-        rel = os.path.relpath(filename, PROJECT_ROOT)
-        print(f"{rel}: {executed}/{total}")
-    print(f"Total coverage: {coverage_pct:.2f}%")
-
-    if coverage_pct < args.min:
-        print(
-            f"Coverage {coverage_pct:.2f}% is below required {args.min}%", file=sys.stderr
+        for filename, (executed, total) in sorted(totals.items()):
+            rel = os.path.relpath(filename, PROJECT_ROOT)
+            logger.info(
+                "file coverage",
+                extra={
+                    "event": "test_coverage_file",
+                    "file": rel,
+                    "executed": executed,
+                    "total": total,
+                },
+            )
+        logger.info(
+            "total coverage",
+            extra={"event": "test_coverage_total", "coverage_pct": round(coverage_pct, 2), "min_required": args.min},
         )
-        return 1
-    return 0
+
+        if coverage_pct < args.min:
+            logger.error(
+                "coverage below minimum",
+                extra={
+                    "event": "test_coverage_below_min",
+                    "coverage_pct": round(coverage_pct, 2),
+                    "min_required": args.min,
+                },
+            )
+            return 1
+        return 0
 
 
 if __name__ == "__main__":  # pragma: no cover
