@@ -1,9 +1,10 @@
 import pandas as pd
 
-from config import COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY
+from config import COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY, COL_COST
 from data.db import get_connection, init_db
 from portfolio import ensure_schema
 from services.market import fetch_prices
+from services.core.portfolio_service import compute_snapshot as _compute_snapshot
 
 
 class PortfolioResult(pd.DataFrame):
@@ -86,11 +87,10 @@ def load_cash_balance() -> float:
 
 
 def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataFrame:
-    """Recalculate today's portfolio values and persist them to ``PORTFOLIO_CSV``."""
+    """Recalculate today's portfolio values and persist them to the database.
 
-    results: list[dict[str, float | str]] = []
-    total_value = 0.0
-    total_pnl = 0.0
+    Delegates snapshot assembly to pure compute_snapshot to keep logic consistent.
+    """
 
     tickers = portfolio_df[COL_TICKER].tolist()
     data = fetch_prices(tickers)
@@ -103,63 +103,15 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
                 if val is not None and not pd.isna(val):
                     prices[t] = float(val)
         elif set(["ticker", "current_price"]).issubset(set(data.columns)):
-            # Our services.market.fetch_prices shape
             for _, r in data.iterrows():
                 cur = r.get("current_price") if hasattr(r, "get") else r["current_price"]
                 prices[str(r["ticker"])]= float(cur) if pd.notna(cur) else 0.0
         else:
-            # Single ticker DataFrame with Close column
             val = data.get("Close", pd.Series([None])).iloc[-1]
             if tickers and not pd.isna(val):
                 prices[tickers[0]] = float(val)
 
-    for _, row in portfolio_df.iterrows():
-        ticker = row[COL_TICKER]
-        shares = float(row[COL_SHARES])
-        stop = float(row[COL_STOP])
-        buy_price = float(row[COL_PRICE])
-
-        # Prefer fetched price; if missing or invalid, use 0.0 so tests can assert empty price paths
-        price = prices.get(ticker)
-        if price is None or pd.isna(price) or price <= 0:
-            price = 0.0
-        value = round(price * shares, 2)
-        pnl = round((price - buy_price) * shares, 2)
-        total_value += value
-        total_pnl += pnl
-
-        results.append(
-            {
-                "Date": TODAY,
-                "Ticker": ticker,
-                "Shares": shares,
-                "Cost Basis": buy_price,
-                "Stop Loss": stop,
-                "Current Price": price,
-                "Total Value": value,
-                "PnL": pnl,
-                "Action": "HOLD",
-                "Cash Balance": "",
-                "Total Equity": "",
-            }
-        )
-
-    total_row = {
-        "Date": TODAY,
-        "Ticker": "TOTAL",
-        "Shares": "",
-        "Cost Basis": "",
-        "Stop Loss": "",
-        "Current Price": "",
-        "Total Value": round(total_value, 2),
-        "PnL": round(total_pnl, 2),
-        "Action": "",
-        "Cash Balance": round(cash, 2),
-        "Total Equity": round(total_value + cash, 2),
-    }
-    results.append(total_row)
-
-    df = pd.DataFrame(results)
+    df = _compute_snapshot(portfolio_df.rename(columns={COL_TICKER: "ticker", COL_SHARES: "shares", COL_STOP: "stop_loss", COL_PRICE: "buy_price", COL_COST: "cost_basis"}), prices, cash, TODAY)
 
     # Rename columns to match the portfolio_history table schema
     df = df.rename(

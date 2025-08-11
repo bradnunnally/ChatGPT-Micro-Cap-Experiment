@@ -9,6 +9,12 @@ import data.portfolio as portfolio_data
 from config import COL_COST, COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY
 from data.db import get_connection, init_db
 from services.core.repository import PortfolioRepository
+from services.core.portfolio_service import (
+    apply_buy as _apply_buy,
+    apply_sell as _apply_sell,
+    calculate_pnl as _core_calculate_pnl,
+    calculate_position_value as _core_calculate_position_value,
+)
 from services.core.validation import (
     validate_shares as _core_validate_shares,
 )
@@ -116,27 +122,14 @@ def manual_buy(
             append_trade_log(log)
 
     mask = portfolio_df[COL_TICKER] == ticker
-    if not mask.any():
-        new_row = {
-            COL_TICKER: ticker,
-            COL_SHARES: shares,
-            COL_STOP: stop_loss,
-            COL_PRICE: price,
-            COL_COST: cost,
-        }
-        portfolio_df = pd.concat(
-            [portfolio_df, pd.DataFrame([new_row])], ignore_index=True
-        )
-    else:
-        idx = portfolio_df[mask].index[0]
-        current_shares = float(portfolio_df.at[idx, COL_SHARES])
-        current_cost = float(portfolio_df.at[idx, COL_COST])
-        portfolio_df.at[idx, COL_SHARES] = current_shares + shares
-        portfolio_df.at[idx, COL_COST] = current_cost + cost
-        portfolio_df.at[idx, COL_PRICE] = (
-            portfolio_df.at[idx, COL_COST] / portfolio_df.at[idx, COL_SHARES]
-        )
-        portfolio_df.at[idx, COL_STOP] = stop_loss
+    # Delegate portfolio math to pure function for consistency
+    portfolio_df = _apply_buy(
+        portfolio_df,
+        ticker=ticker,
+        shares=shares,
+        price=price,
+        stop_loss=stop_loss,
+    )
 
     cash -= cost
     # Persist snapshot via repository when provided; otherwise defer to data.portfolio
@@ -210,8 +203,9 @@ def manual_sell(
         return (False if session_mode else (False, msg, portfolio_df, cash))
 
     buy_price = float(row[COL_PRICE])
+    # Use pure function for pnl calculation
+    pnl = _core_calculate_pnl(buy_price=buy_price, current_price=price, shares=shares)
     cost_basis = buy_price * shares
-    pnl = price * shares - cost_basis
 
     if not session_mode:
         log = {
@@ -234,12 +228,13 @@ def manual_sell(
         else:
             append_trade_log(log)
 
-    if shares == total_shares:
-        portfolio_df = portfolio_df[portfolio_df[COL_TICKER] != ticker]
-    else:
-        idx = portfolio_df[portfolio_df[COL_TICKER] == ticker].index[0]
-        portfolio_df.at[idx, COL_SHARES] = total_shares - shares
-        portfolio_df.at[idx, COL_COST] = portfolio_df.at[idx, COL_SHARES] * buy_price
+    # Delegate sell math to pure function
+    portfolio_df, _ = _apply_sell(
+        portfolio_df,
+        ticker=ticker,
+        shares=shares,
+        price=price,
+    )
 
     cash += price * shares
     # Persist snapshot via repository when provided; otherwise defer to data.portfolio
@@ -264,11 +259,13 @@ def manual_sell(
 
 # Simple business logic helpers expected by tests
 def calculate_position_value(shares: float, current_price: float) -> float:
-    return float(shares) * float(current_price)
+    # Delegate to pure function to keep logic in one place
+    return _core_calculate_position_value(shares, current_price)
 
 
 def calculate_profit_loss(buy_price: float, current_price: float, shares: float) -> float:
-    return (float(current_price) - float(buy_price)) * float(shares)
+    # Delegate to pure function to keep logic in one place
+    return _core_calculate_pnl(buy_price, current_price, shares)
 
 
 def update_cash_balance(delta: float) -> None:
