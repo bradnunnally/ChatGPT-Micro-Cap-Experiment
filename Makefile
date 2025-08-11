@@ -38,3 +38,19 @@ audit:
 	. .venv/bin/activate && ruff . --select F401,F841,ERA || true
 	. .venv/bin/activate && vulture . --min-confidence 80 || true
 	. .venv/bin/activate && deptry . || true
+
+.PHONY: cli cli-snapshot cli-export cli-import cli-rebalance
+cli:
+	. .venv/bin/activate && python -m cli.main --help
+
+cli-snapshot:
+	. .venv/bin/activate && python -m cli.main snapshot $(ARGS)
+
+cli-export:
+	. .venv/bin/activate && python -m cli.main export --out $(OUT)
+
+cli-import:
+	. .venv/bin/activate && python -m cli.main import- --csv $(CSV)
+
+cli-rebalance:
+	. .venv/bin/activate && python -m cli.main rebalance $(ARGS)

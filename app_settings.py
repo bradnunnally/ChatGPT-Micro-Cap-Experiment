@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     # Misc
     cache_ttl_seconds: int = Field(default=300, ge=0)
     environment: str = Field(default="development")
+    # Trading calendar
+    trading_holidays: List[str] = Field(default_factory=list, description="List of YYYY-MM-DD holiday dates when market is closed")
 
     @field_validator("data_dir", "db_file", "portfolio_csv", "trade_log_csv", "watchlist_file", mode="after")
     @classmethod

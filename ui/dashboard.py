@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from data.portfolio import save_portfolio_snapshot
+from app_settings import settings
 from services.core.market_service import MarketService
 from services.core.portfolio_service import PortfolioService
 from services.session import init_session_state
@@ -151,6 +152,11 @@ def render_dashboard() -> None:
             st.subheader("Market Status")
             clock = get_clock()
             cal = TradingCalendar(clock=clock)
+            if settings.trading_holidays:
+                try:
+                    cal.holidays = set(settings.trading_holidays)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
             now_ts = clock.now()
             is_open = cal.is_market_open(now_ts)
 
