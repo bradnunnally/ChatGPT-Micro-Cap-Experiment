@@ -1,3 +1,4 @@
+from services.time import Clock, get_clock, TradingCalendar
 from datetime import datetime
 
 import pandas as pd
@@ -142,7 +143,33 @@ def render_dashboard() -> None:
             }
         )
 
-        show_cash_section()
+        # Cash section (left) + Market status banner (right)
+        cash_col, status_col = st.columns([1, 1])
+        with cash_col:
+            show_cash_section()
+        with status_col:
+            st.subheader("Market Status")
+            clock = get_clock()
+            cal = TradingCalendar(clock=clock)
+            now_ts = clock.now()
+            is_open = cal.is_market_open(now_ts)
+
+            # Helper to format a time in ET
+            def _fmt(dt: datetime) -> str:
+                return dt.strftime("%I:%M %p")
+
+            if is_open:
+                close_dt = datetime.combine(now_ts.date(), cal.market_close).replace(tzinfo=clock.tz)
+                st.success(f"Open — until {_fmt(close_dt)} ET")
+            else:
+                # Determine next open
+                if cal.is_trading_day(now_ts.date()) and now_ts.timetz().replace(tzinfo=None) < cal.market_open:
+                    next_day = now_ts.date()
+                else:
+                    next_day = cal.next_trading_day(now_ts.date())
+                next_open_dt = datetime.combine(next_day, cal.market_open).replace(tzinfo=clock.tz)
+                day_label = "today" if next_day == now_ts.date() else next_open_dt.strftime("%a %b %d")
+                st.warning(f"Closed — opens {_fmt(next_open_dt)} ET {day_label}")
 
         port_table = summary_df[summary_df["Ticker"] != "TOTAL"].copy()
         header_cols = st.columns([4, 1, 1])
@@ -169,7 +196,7 @@ def render_dashboard() -> None:
                 if "timestamp" in st.session_state.portfolio.columns:
                     last_update = st.session_state.portfolio["timestamp"].max()
                 else:
-                    last_update = datetime.now()
+                    last_update = get_clock().now()
 
                 formatted_time = last_update.strftime("%B %d, %Y at %I:%M %p")
                 st.caption(f"Last updated: {formatted_time}")

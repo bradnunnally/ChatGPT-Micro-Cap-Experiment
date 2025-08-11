@@ -1,4 +1,4 @@
-from datetime import datetime
+from services.time import Clock, get_clock
 from pathlib import Path
 
 import pandas as pd
@@ -64,7 +64,7 @@ def watchlist_page():
     # Load current watchlist and prices
     watchlist = get_watchlist()
     prices_df = load_watchlist_prices(watchlist)
-    last_update = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+    last_update = get_clock().now().strftime("%B %d, %Y at %I:%M %p")
     st.caption(f"Last update: {last_update}")
 
     # Render table header

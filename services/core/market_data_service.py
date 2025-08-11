@@ -5,7 +5,7 @@ import os
 import random
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Optional
 
@@ -29,15 +29,7 @@ class CircuitState:
 
 
 class MarketDataService:
-    """Resilient price lookup service with cache, retries, rate limit, and circuit breaker.
-
-    Contract:
-    - get_price(ticker: str) -> Optional[float]
-      * Raises ValidationError on invalid ticker
-      * Returns cached price when available (within TTL)
-      * Applies rate limit and jittered backoff on retries
-      * Uses a per-ticker circuit breaker to avoid repeated failing calls
-    """
+    """Resilient price lookup with cache, retries, rate limit, and circuit breaker."""
 
     def __init__(
         self,
@@ -56,16 +48,16 @@ class MarketDataService:
         self._fail_threshold = int(circuit_fail_threshold)
         self._cooldown = float(circuit_cooldown)
 
-        self._cache: dict[str, tuple[float, float]] = {}
-        self._circuit: dict[str, CircuitState] = {}
-        self._last_call_ts: float = 0.0
+        self._cache = {}  # symbol -> (price, ts)
+        self._circuit = {}  # symbol -> CircuitState
+        self._last_call_ts = 0.0
 
         # Optional on-disk cache per day
         self._disk_cache_dir = Path(settings.paths.data_dir) / "price_cache"
         self._disk_cache_dir.mkdir(parents=True, exist_ok=True)
-        self._disk_cache_day = datetime.utcnow().strftime("%Y-%m-%d")
+        self._disk_cache_day = datetime.now(UTC).strftime("%Y-%m-%d")
         self._disk_cache_path = self._disk_cache_dir / f"{self._disk_cache_day}.json"
-        self._daily_disk_cache: dict[str, float] = self._load_disk_cache(self._disk_cache_path)
+        self._daily_disk_cache = self._load_disk_cache(self._disk_cache_path)
 
     def _load_disk_cache(self, path: Path) -> dict[str, float]:
         try:
@@ -91,10 +83,10 @@ class MarketDataService:
         return time.time()
 
     def _rate_limit(self) -> None:
-        now = self._now()
-        elapsed = now - self._last_call_ts
+        now_ts = self._now()
+        elapsed = now_ts - self._last_call_ts
         if elapsed < self._min_interval:
-            time.sleep(self._min_interval - elapsed)
+            time.sleep(max(0.0, self._min_interval - elapsed))
         self._last_call_ts = self._now()
 
     def _circuit_open(self, ticker: str) -> bool:
@@ -134,13 +126,13 @@ class MarketDataService:
         symbol = ticker.strip().upper()
 
         # Check in-memory cache
-        now = self._now()
+        now_ts = self._now()
         cached = self._cache.get(symbol)
-        if cached and (now - cached[1]) < self._ttl:
+        if cached and (now_ts - cached[1]) < self._ttl:
             return cached[0]
 
         # Refresh on-disk cache day rollover
-        day_now = datetime.utcnow().strftime("%Y-%m-%d")
+        day_now = datetime.now(UTC).strftime("%Y-%m-%d")
         if day_now != self._disk_cache_day:
             self._disk_cache_day = day_now
             self._disk_cache_path = self._disk_cache_dir / f"{self._disk_cache_day}.json"
@@ -149,7 +141,7 @@ class MarketDataService:
         # Check daily disk cache (acts as a gentle fallback)
         if symbol in self._daily_disk_cache:
             price = float(self._daily_disk_cache[symbol])
-            self._cache[symbol] = (price, now)
+            self._cache[symbol] = (price, now_ts)
             return price
 
         # Circuit breaker
@@ -194,7 +186,6 @@ class MarketDataService:
             except NoMarketDataError as e:
                 last_exc = e
                 self._record_failure(symbol)
-                # No point retrying if market data not available
                 break
             except Exception as e:
                 last_exc = e
@@ -205,7 +196,6 @@ class MarketDataService:
                 time.sleep(max(0.0, delay))
                 attempt += 1
 
-        # If we get here, all retries failed
         if isinstance(last_exc, NoMarketDataError):
             return None
         if last_exc is not None:

@@ -1,4 +1,4 @@
-from datetime import datetime
+from services.time import get_clock
 from pathlib import Path
 
 from portfolio import PORTFOLIO_COLUMNS
@@ -17,4 +17,4 @@ DB_FILE = DATA_DIR / "trading.db"
 
 COL_TICKER, COL_SHARES, COL_STOP, COL_PRICE, COL_COST = PORTFOLIO_COLUMNS
 
-TODAY = datetime.today().strftime("%Y-%m-%d")
+TODAY = get_clock().today().strftime("%Y-%m-%d")

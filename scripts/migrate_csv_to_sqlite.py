@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
-from datetime import datetime
+from services.time import get_clock
 from pathlib import Path
 from typing import Optional
 import sys
@@ -217,7 +217,7 @@ def migrate_trade_log_csv(csv_path: Path, conn) -> dict:
 
 
 def backup_files(files: list[Path], backup_root: Path) -> list[Path]:
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = get_clock().now().strftime("%Y%m%d_%H%M%S")
     dest_dir = backup_root / f"migration_{timestamp}"
     dest_dir.mkdir(parents=True, exist_ok=True)
     copied: list[Path] = []

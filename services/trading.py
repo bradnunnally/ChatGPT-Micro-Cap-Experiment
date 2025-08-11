@@ -350,12 +350,13 @@ def execute_buy(trade_data: dict) -> bool:
         st.session_state.cash -= total_cost
 
         # Add to portfolio
+        from services.time import Clock
         new_position = pd.DataFrame(
             {
                 "Ticker": [trade_data["ticker"]],
                 "Shares": [trade_data["shares"]],
                 "Price": [trade_data["price"]],
-                "Date": [datetime.now()],
+                "Date": [Clock().now()],
             }
         )
 
