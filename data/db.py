@@ -1,5 +1,6 @@
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from app_settings import settings
 
@@ -67,7 +68,7 @@ SCHEMA_STATEMENTS = [
 SCHEMA = "\n".join(stmt.strip() for stmt in SCHEMA_STATEMENTS)
 
 
-def get_connection():
+def get_connection() -> Any:
     """Return a SQLite3 connection or a proxy that supports context management when mocked.
 
     - Returns a real sqlite3.Connection in normal operation (supports `with`).

@@ -1,8 +1,8 @@
-
 import pytest
 import pandas as pd
 from services.trading import manual_buy, manual_sell
 from unittest.mock import patch
+
 
 def test_manual_buy_and_sell():
     df = pd.DataFrame(columns=["ticker", "shares", "stop_loss", "price", "cost_basis"])

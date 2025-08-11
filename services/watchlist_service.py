@@ -34,6 +34,7 @@ class WatchlistDF(pd.DataFrame):
 @dataclass
 class WatchlistState:
     """Container for watchlist state"""
+
     tickers: Set[str] | None = None
     prices: Dict[str, float] | None = None
 
@@ -44,7 +45,9 @@ class WatchlistState:
 
 def init_watchlist() -> None:
     """Initialize watchlist state if not present or corrupted (starts empty)."""
-    if not hasattr(st.session_state, "watchlist_state") or not isinstance(st.session_state.watchlist_state, WatchlistState):
+    if not hasattr(st.session_state, "watchlist_state") or not isinstance(
+        st.session_state.watchlist_state, WatchlistState
+    ):
         st.session_state.watchlist_state = WatchlistState()
     # Clear at the beginning of each test but keep idempotent within a single test
     current_test = os.environ.get("PYTEST_CURRENT_TEST", None)
@@ -57,7 +60,9 @@ def init_watchlist() -> None:
 
 def add_to_watchlist(ticker: str) -> None:
     """Add ticker to watchlist"""
-    if not hasattr(st.session_state, "watchlist_state") or not isinstance(st.session_state.watchlist_state, WatchlistState):
+    if not hasattr(st.session_state, "watchlist_state") or not isinstance(
+        st.session_state.watchlist_state, WatchlistState
+    ):
         st.session_state.watchlist_state = WatchlistState()
     ticker = ticker.upper()
 
@@ -70,7 +75,9 @@ def add_to_watchlist(ticker: str) -> None:
 
 def remove_from_watchlist(ticker: str) -> None:
     """Remove ticker from watchlist"""
-    if not hasattr(st.session_state, "watchlist_state") or not isinstance(st.session_state.watchlist_state, WatchlistState):
+    if not hasattr(st.session_state, "watchlist_state") or not isinstance(
+        st.session_state.watchlist_state, WatchlistState
+    ):
         st.session_state.watchlist_state = WatchlistState()
     ticker = ticker.upper()
     st.session_state.watchlist_state.tickers.discard(ticker)
@@ -78,7 +85,9 @@ def remove_from_watchlist(ticker: str) -> None:
 
 def get_watchlist() -> pd.DataFrame:
     """Get watchlist as DataFrame"""
-    if not hasattr(st.session_state, "watchlist_state") or not isinstance(st.session_state.watchlist_state, WatchlistState):
+    if not hasattr(st.session_state, "watchlist_state") or not isinstance(
+        st.session_state.watchlist_state, WatchlistState
+    ):
         st.session_state.watchlist_state = WatchlistState()
     tickers = sorted(list(set(st.session_state.watchlist_state.tickers)))
     return WatchlistDF({"ticker": tickers})

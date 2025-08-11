@@ -1,10 +1,10 @@
-
 import pytest
 import pandas as pd
 from services.trading import manual_buy, manual_sell
 from data.portfolio import save_portfolio_snapshot
 from data.db import init_db, get_connection
 from unittest.mock import patch
+
 
 def test_buy_sell_snapshot_integration():
     init_db()

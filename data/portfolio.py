@@ -1,10 +1,10 @@
 import pandas as pd
 
-from config import COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY, COL_COST
+from config import COL_COST, COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY
 from data.db import get_connection, init_db
 from portfolio import ensure_schema
-from services.market import fetch_prices
 from services.core.portfolio_service import compute_snapshot as _compute_snapshot
+from services.market import fetch_prices
 
 
 class PortfolioResult(pd.DataFrame):
@@ -39,8 +39,12 @@ def load_portfolio():
             portfolio_df = pd.read_sql_query("SELECT * FROM portfolio", conn)
         except Exception:
             # Fallback for tests that provide a mocked connection
-            rows = conn.execute("SELECT ticker, shares, stop_loss, buy_price, cost_basis FROM portfolio").fetchall()
-            portfolio_df = pd.DataFrame(rows, columns=["ticker", "shares", "stop_loss", "buy_price", "cost_basis"]).copy()
+            rows = conn.execute(
+                "SELECT ticker, shares, stop_loss, buy_price, cost_basis FROM portfolio"
+            ).fetchall()
+            portfolio_df = pd.DataFrame(
+                rows, columns=["ticker", "shares", "stop_loss", "buy_price", "cost_basis"]
+            ).copy()
         try:
             cash_row = conn.execute("SELECT balance FROM cash WHERE id = 0").fetchone()
         except Exception:
@@ -105,13 +109,26 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
         elif set(["ticker", "current_price"]).issubset(set(data.columns)):
             for _, r in data.iterrows():
                 cur = r.get("current_price") if hasattr(r, "get") else r["current_price"]
-                prices[str(r["ticker"])]= float(cur) if pd.notna(cur) else 0.0
+                prices[str(r["ticker"])] = float(cur) if pd.notna(cur) else 0.0
         else:
             val = data.get("Close", pd.Series([None])).iloc[-1]
             if tickers and not pd.isna(val):
                 prices[tickers[0]] = float(val)
 
-    df = _compute_snapshot(portfolio_df.rename(columns={COL_TICKER: "ticker", COL_SHARES: "shares", COL_STOP: "stop_loss", COL_PRICE: "buy_price", COL_COST: "cost_basis"}), prices, cash, TODAY)
+    df = _compute_snapshot(
+        portfolio_df.rename(
+            columns={
+                COL_TICKER: "ticker",
+                COL_SHARES: "shares",
+                COL_STOP: "stop_loss",
+                COL_PRICE: "buy_price",
+                COL_COST: "cost_basis",
+            }
+        ),
+        prices,
+        cash,
+        TODAY,
+    )
 
     # Rename columns to match the portfolio_history table schema
     df = df.rename(
@@ -152,18 +169,24 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
         # Update current holdings
         conn.execute("DELETE FROM portfolio")
         if not portfolio_df.empty:
-            core_columns = ['ticker', 'shares', 'stop_loss', 'buy_price', 'cost_basis']
+            core_columns = ["ticker", "shares", "stop_loss", "buy_price", "cost_basis"]
             available_columns = [col for col in core_columns if col in portfolio_df.columns]
             if available_columns:
                 # Use executemany to avoid reliance on pandas.to_sql when using mocks
                 insert_sql = "INSERT INTO portfolio (ticker, shares, stop_loss, buy_price, cost_basis) VALUES (?, ?, ?, ?, ?)"
                 rows = (
-                    portfolio_df
-                    .reindex(columns=core_columns)
+                    portfolio_df.reindex(columns=core_columns)
                     .fillna(0)
-                    .apply(lambda r: (
-                        r['ticker'], float(r['shares']), float(r['stop_loss']), float(r['buy_price']), float(r['cost_basis'])
-                    ), axis=1)
+                    .apply(
+                        lambda r: (
+                            r["ticker"],
+                            float(r["shares"]),
+                            float(r["stop_loss"]),
+                            float(r["buy_price"]),
+                            float(r["cost_basis"]),
+                        ),
+                        axis=1,
+                    )
                     .tolist()
                 )
                 for row in rows:
@@ -186,16 +209,17 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
                 conn.execute(
                     insert_hist,
                     (
-                        r['date'], r['ticker'],
-                        float(r['shares']) if r['shares'] != "" else 0.0,
-                        float(r['cost_basis']) if r['cost_basis'] != "" else 0.0,
-                        float(r['stop_loss']) if r['stop_loss'] != "" else 0.0,
-                        float(r['current_price']) if r['current_price'] != "" else 0.0,
-                        float(r['total_value']) if r['total_value'] != "" else 0.0,
-                        float(r['pnl']) if r['pnl'] != "" else 0.0,
-                        r['action'],
-                        float(r['cash_balance']) if r['cash_balance'] != "" else 0.0,
-                        float(r['total_equity']) if r['total_equity'] != "" else 0.0,
+                        r["date"],
+                        r["ticker"],
+                        float(r["shares"]) if r["shares"] != "" else 0.0,
+                        float(r["cost_basis"]) if r["cost_basis"] != "" else 0.0,
+                        float(r["stop_loss"]) if r["stop_loss"] != "" else 0.0,
+                        float(r["current_price"]) if r["current_price"] != "" else 0.0,
+                        float(r["total_value"]) if r["total_value"] != "" else 0.0,
+                        float(r["pnl"]) if r["pnl"] != "" else 0.0,
+                        r["action"],
+                        float(r["cash_balance"]) if r["cash_balance"] != "" else 0.0,
+                        float(r["total_equity"]) if r["total_equity"] != "" else 0.0,
                     ),
                 )
 

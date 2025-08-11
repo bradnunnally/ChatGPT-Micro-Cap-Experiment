@@ -3,7 +3,7 @@ import streamlit as st
 from app_settings import settings
 from data.portfolio import load_portfolio
 from data.watchlist import load_watchlist
-from services.core.sqlite_repository import SQLitePortfolioRepository
+from services.core.sqlite_repository import SqlitePortfolioRepository
 
 
 def init_session_state() -> None:
@@ -37,7 +37,7 @@ def init_session_state() -> None:
 
     # Initialize a repository instance for persistence if not present
     if "repo" not in st.session_state:
-        st.session_state.repo = SQLitePortfolioRepository()
+        st.session_state.repo = SqlitePortfolioRepository()
 
     if not st.session_state.watchlist and settings.paths.watchlist_file.exists():
         st.session_state.watchlist = load_watchlist()

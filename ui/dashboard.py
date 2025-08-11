@@ -1,18 +1,18 @@
-from services.time import Clock, get_clock, TradingCalendar
 from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
-from data.portfolio import save_portfolio_snapshot
 from app_settings import settings
+from core.errors import ValidationError
+from data.portfolio import save_portfolio_snapshot
 from services.core.market_service import MarketService
 from services.core.portfolio_service import PortfolioService
 from services.session import init_session_state
+from services.time import TradingCalendar, get_clock
 from ui.cash import show_cash_section
 from ui.forms import show_buy_form, show_sell_form
 from ui.summary import build_daily_summary
-from core.errors import ValidationError
 
 
 def fmt_currency(val: float) -> str:
@@ -21,7 +21,8 @@ def fmt_currency(val: float) -> str:
         val = float(val)
         return f"${val:,.2f}" if val >= 0 else f"-${abs(val):,.2f}"
     except (ValueError, TypeError):
-        return ''
+        return ""
+
 
 def fmt_percent(val: float) -> str:
     """Format value as percentage with arrow."""
@@ -33,61 +34,68 @@ def fmt_percent(val: float) -> str:
             return f"{val:.1f}% ↓"
         return f"{val:.1f}%"
     except (ValueError, TypeError):
-        return ''
+        return ""
+
 
 def fmt_shares(val: float) -> str:
     """Format share count."""
     try:
         return f"{int(float(val)):,}"
     except (ValueError, TypeError):
-        return ''
+        return ""
+
 
 def color_pnl(val: float) -> str:
     """Color formatting for P&L values."""
     try:
         val = float(val)
         if val > 0:
-            return 'color: green'
+            return "color: green"
         elif val < 0:
-            return 'color: red'
-        return ''
+            return "color: red"
+        return ""
     except (ValueError, TypeError):
-        return ''
+        return ""
+
 
 def highlight_stop(row: pd.Series) -> list:
     """Highlight row if price is below stop loss."""
     try:
-        return ['background-color: #ffcccc' if row['Current Price'] < row['Stop Loss'] 
-                else '' for _ in range(len(row))]
+        return [
+            "background-color: #ffcccc" if row["Current Price"] < row["Stop Loss"] else ""
+            for _ in range(len(row))
+        ]
     except (KeyError, TypeError):
-        return [''] * len(row)
+        return [""] * len(row)
+
 
 def highlight_pct(val) -> str:
     """Highlight percentage changes for individual values."""
     try:
         if pd.isna(val):
-            return ''
+            return ""
         if val > 0:
-            return 'color: green'
+            return "color: green"
         elif val < 0:
-            return 'color: red'
+            return "color: red"
         else:
-            return ''
+            return ""
     except (TypeError, ValueError):
-        return ''
+        return ""
+
 
 def initialize_services():
     """Initialize services in session state."""
-    if 'portfolio_service' not in st.session_state:
+    if "portfolio_service" not in st.session_state:
         st.session_state.portfolio_service = PortfolioService()
-    if 'market_service' not in st.session_state:
+    if "market_service" not in st.session_state:
         st.session_state.market_service = MarketService()
+
 
 def render_dashboard() -> None:
     """Render the main dashboard view."""
 
     init_session_state()
-
 
     feedback = st.session_state.pop("feedback", None)
     if feedback:
@@ -114,9 +122,7 @@ def render_dashboard() -> None:
             else:
                 st.session_state.cash = start_cash
                 st.session_state.needs_cash = False
-                save_portfolio_snapshot(
-                    st.session_state.portfolio, st.session_state.cash
-                )
+                save_portfolio_snapshot(st.session_state.portfolio, st.session_state.cash)
                 st.session_state.feedback = (
                     "success",
                     f"Starting cash of ${start_cash:.2f} recorded.",
@@ -124,9 +130,7 @@ def render_dashboard() -> None:
             st.session_state.pop("start_cash", None)
             st.rerun()
     else:
-        summary_df = save_portfolio_snapshot(
-            st.session_state.portfolio, st.session_state.cash
-        )
+        summary_df = save_portfolio_snapshot(st.session_state.portfolio, st.session_state.cash)
 
         summary_df = summary_df.rename(
             columns={
@@ -165,16 +169,23 @@ def render_dashboard() -> None:
                 return dt.strftime("%I:%M %p")
 
             if is_open:
-                close_dt = datetime.combine(now_ts.date(), cal.market_close).replace(tzinfo=clock.tz)
+                close_dt = datetime.combine(now_ts.date(), cal.market_close).replace(
+                    tzinfo=clock.tz
+                )
                 st.success(f"Open — until {_fmt(close_dt)} ET")
             else:
                 # Determine next open
-                if cal.is_trading_day(now_ts.date()) and now_ts.timetz().replace(tzinfo=None) < cal.market_open:
+                if (
+                    cal.is_trading_day(now_ts.date())
+                    and now_ts.timetz().replace(tzinfo=None) < cal.market_open
+                ):
                     next_day = now_ts.date()
                 else:
                     next_day = cal.next_trading_day(now_ts.date())
                 next_open_dt = datetime.combine(next_day, cal.market_open).replace(tzinfo=clock.tz)
-                day_label = "today" if next_day == now_ts.date() else next_open_dt.strftime("%a %b %d")
+                day_label = (
+                    "today" if next_day == now_ts.date() else next_open_dt.strftime("%a %b %d")
+                )
                 st.warning(f"Closed — opens {_fmt(next_open_dt)} ET {day_label}")
 
         port_table = summary_df[summary_df["Ticker"] != "TOTAL"].copy()
@@ -183,19 +194,15 @@ def render_dashboard() -> None:
             st.subheader("Current Portfolio")
 
         if port_table.empty:
-            st.info(
-                "Your portfolio is empty. Use the Buy form below to add your first position."
-            )
+            st.info("Your portfolio is empty. Use the Buy form below to add your first position.")
         else:
             try:  # pragma: no cover - optional dependency
                 from streamlit_autorefresh import st_autorefresh
-                
+
                 # Refresh every 15 minutes (900,000 milliseconds)
                 st_autorefresh(interval=900_000, key="portfolio_refresh")
             except ImportError:  # pragma: no cover - import-time failure
-                st.warning(
-                    "Install streamlit-autorefresh for auto refresh support."
-                )
+                st.warning("Install streamlit-autorefresh for auto refresh support.")
 
             if not st.session_state.portfolio.empty:
                 # Safely get the timestamp or use current time as fallback
@@ -322,6 +329,7 @@ def render_dashboard() -> None:
             for line in st.session_state.error_log:
                 st.text(line)
 
+
 def format_currency(value: float) -> str:
     """Format a number as currency."""
     is_negative = value < 0
@@ -329,15 +337,17 @@ def format_currency(value: float) -> str:
     formatted = f"${abs_value:,.2f}"
     return f"-{formatted}" if is_negative else formatted
 
+
 def format_percentage(value: float) -> str:
     """Format a number as percentage."""
     return f"{value * 100:.2f}%"
+
 
 def show_portfolio_summary() -> None:
     """Display portfolio summary metrics."""
     initialize_services()
     metrics = st.session_state.portfolio_service.get_metrics()
-    
+
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total Value", f"${metrics.total_value:,.2f}")
@@ -346,13 +356,14 @@ def show_portfolio_summary() -> None:
     with col3:
         st.metric("Total Return", f"{metrics.total_return:.1%}")
 
+
 def show_holdings_table() -> None:
     """Display holdings table."""
     initialize_services()
     df = st.session_state.portfolio_service.to_dataframe()
-    
+
     if df.empty:
         st.info("No holdings to display")
         return
-        
+
     st.dataframe(df)

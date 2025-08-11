@@ -26,7 +26,9 @@ class PortfolioRepository(Protocol):
     def load_cash(self) -> float:  # pragma: no cover
         """Return the current cash balance."""
 
-    def save_snapshot(self, portfolio_df: pd.DataFrame, cash: float) -> pd.DataFrame:  # pragma: no cover
+    def save_snapshot(
+        self, portfolio_df: pd.DataFrame, cash: float
+    ) -> pd.DataFrame:  # pragma: no cover
         """Persist holdings, cash, and a daily snapshot; returns snapshot DataFrame."""
 
     def append_trade_log(self, log: dict) -> None:  # pragma: no cover

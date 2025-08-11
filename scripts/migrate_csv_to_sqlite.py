@@ -1,24 +1,24 @@
+# Use the central settings and DB helpers
 #!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import shutil
-from services.time import get_clock
+import sys
 from pathlib import Path
 from typing import Optional
-import sys
 
 import pandas as pd
+
+from app_settings import settings
+from data.db import get_connection, init_db
+from infra.logging import get_logger, new_correlation_id
+from services.time import get_clock
 
 # Ensure repository root is on sys.path for local execution
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-# Use the central settings and DB helpers
-from app_settings import settings
-from data.db import get_connection, init_db
-from infra.logging import get_logger, new_correlation_id
 
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -123,7 +123,11 @@ def migrate_portfolio_csv(csv_path: Path, conn) -> dict:
 
     # Cash balance from TOTAL row of the latest snapshot
     cash_val = 0.0
-    total_rows = snap[snap["ticker"].str.upper() == "TOTAL"] if "ticker" in snap.columns else pd.DataFrame([])
+    total_rows = (
+        snap[snap["ticker"].str.upper() == "TOTAL"]
+        if "ticker" in snap.columns
+        else pd.DataFrame([])
+    )
     if not total_rows.empty and "cash_balance" in total_rows.columns:
         try:
             cash_val = float(total_rows.iloc[-1]["cash_balance"] or 0.0)
@@ -131,7 +135,12 @@ def migrate_portfolio_csv(csv_path: Path, conn) -> dict:
             cash_val = 0.0
     conn.execute("INSERT OR REPLACE INTO cash (id, balance) VALUES (0, ?)", (float(cash_val),))
 
-    return {"skipped": False, "rows_history": int(df.shape[0]), "rows_portfolio": int(holdings.shape[0]), "cash": float(cash_val)}
+    return {
+        "skipped": False,
+        "rows_history": int(df.shape[0]),
+        "rows_portfolio": int(holdings.shape[0]),
+        "cash": float(cash_val),
+    }
 
 
 def migrate_trade_log_csv(csv_path: Path, conn) -> dict:
@@ -230,16 +239,36 @@ def backup_files(files: list[Path], backup_root: Path) -> list[Path]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Migrate legacy CSV data into SQLite DB and back up CSVs.")
-    parser.add_argument("--portfolio-csv", type=Path, default=settings.paths.portfolio_csv, help="Path to portfolio CSV snapshot")
-    parser.add_argument("--trade-log-csv", type=Path, default=settings.paths.trade_log_csv, help="Path to trade log CSV")
-    parser.add_argument("--db-file", type=Path, default=settings.paths.db_file, help="Path to SQLite DB file")
-    parser.add_argument("--backup-dir", type=Path, default=settings.paths.data_dir / "backups", help="Directory to write CSV backups")
+    parser = argparse.ArgumentParser(
+        description="Migrate legacy CSV data into SQLite DB and back up CSVs."
+    )
+    parser.add_argument(
+        "--portfolio-csv",
+        type=Path,
+        default=settings.paths.portfolio_csv,
+        help="Path to portfolio CSV snapshot",
+    )
+    parser.add_argument(
+        "--trade-log-csv",
+        type=Path,
+        default=settings.paths.trade_log_csv,
+        help="Path to trade log CSV",
+    )
+    parser.add_argument(
+        "--db-file", type=Path, default=settings.paths.db_file, help="Path to SQLite DB file"
+    )
+    parser.add_argument(
+        "--backup-dir",
+        type=Path,
+        default=settings.paths.data_dir / "backups",
+        help="Directory to write CSV backups",
+    )
     args = parser.parse_args()
 
     # Ensure DB points to the requested file and has schema
     try:
         from data import db as db_module  # late import to avoid circulars
+
         db_module.DB_FILE = Path(args.db_file)
     except Exception:
         pass

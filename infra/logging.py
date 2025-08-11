@@ -21,7 +21,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
-
 _correlation_id: ContextVar[str] = ContextVar("correlation_id", default="")
 
 
@@ -38,7 +37,7 @@ def set_correlation_id(value: str) -> None:
 
 
 @contextmanager
-def new_correlation_id(value: Optional[str] = None):
+def new_correlation_id(value: Optional[str] = None) -> Any:
     token = None
     try:
         value = value or uuid.uuid4().hex
@@ -116,8 +115,17 @@ class AuditLogger:
     def __init__(self, base: Optional[logging.Logger] = None):
         self._logger = base or get_logger("audit")
 
-    def trade(self, action: str, *, ticker: str, shares: float, price: float,
-              status: str = "success", reason: Optional[str] = None, **extra: Any) -> None:
+    def trade(
+        self,
+        action: str,
+        *,
+        ticker: str,
+        shares: float,
+        price: float,
+        status: str = "success",
+        reason: Optional[str] = None,
+        **extra: Any,
+    ) -> None:
         payload = {
             "event": "trade",
             "action": action,

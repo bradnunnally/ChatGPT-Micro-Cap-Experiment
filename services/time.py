@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import zoneinfo
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
-
-import zoneinfo
 
 
 @dataclass(frozen=True)
@@ -25,8 +24,10 @@ class Clock:
     def utcnow(self) -> datetime:
         return datetime.now(timezone.utc)
 
+
 # Module-level default clock for app-wide use and easy injection in tests.
 _DEFAULT_CLOCK: Clock | None = None
+
 
 def get_clock() -> Clock:
     """Return the process-wide default Clock instance.
@@ -37,6 +38,7 @@ def get_clock() -> Clock:
     if _DEFAULT_CLOCK is None:
         _DEFAULT_CLOCK = Clock()
     return _DEFAULT_CLOCK
+
 
 def set_clock(clock: Clock) -> None:
     """Override the default Clock (primarily for tests)."""
@@ -52,7 +54,7 @@ class TradingCalendar:
     """
 
     clock: Clock
-    market_open: time = time(9, 30)   # 9:30 AM ET
+    market_open: time = time(9, 30)  # 9:30 AM ET
     market_close: time = time(16, 0)  # 4:00 PM ET
 
     # Optional simple US holiday set (YYYY-MM-DD strings) for closure awareness

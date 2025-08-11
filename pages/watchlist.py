@@ -1,4 +1,3 @@
-from services.time import Clock, get_clock
 from pathlib import Path
 
 import pandas as pd
@@ -6,6 +5,7 @@ import streamlit as st
 
 from components.nav import navbar
 from services.market import fetch_price
+from services.time import get_clock
 from services.watchlist_service import (
     add_to_watchlist,
     get_watchlist,
@@ -31,6 +31,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 def watchlist_page():
     navbar(Path(__file__).name)
     st.title("Watchlist")
@@ -52,7 +53,6 @@ def watchlist_page():
             else:
                 add_to_watchlist(symbol)
                 st.session_state["new_ticker"] = ""
-                
 
     input_col.text_input(
         "Add ticker to watchlist",
@@ -79,11 +79,11 @@ def watchlist_page():
     # Loop through watchlist DataFrame
     if not prices_df.empty:
         for idx, row in prices_df.iterrows():
-            ticker = row['ticker']
-            price = row.get('current_price')
+            ticker = row["ticker"]
+            price = row.get("current_price")
             if price is None or pd.isna(price):
                 continue
-            
+
             change_pct = None
             row_cols = st.columns([3, 2, 2, 1, 1])
             row_cols[0].write(ticker)
@@ -100,6 +100,7 @@ def watchlist_page():
                     show_buy_form(ticker_default=ticker)
     else:
         st.write("Your watchlist is empty. Add some tickers above!")
+
 
 if __name__ == "__main__":
     watchlist_page()

@@ -6,8 +6,8 @@ import streamlit as st
 from infra.logging import (  # noqa: F401
     AuditLogger,
     audit as audit_logger,
-    get_logger,
     get_correlation_id,
+    get_logger,
     new_correlation_id,
     set_correlation_id,
 )

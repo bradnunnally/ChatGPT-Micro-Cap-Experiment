@@ -1,13 +1,14 @@
 import os
 import time
-from typing import Dict, Callable, Any
+from typing import Any, Callable, Dict
 
 import pandas as pd
 import streamlit as st
 import yfinance as yf
-from core.errors import MarketDataDownloadError, NoMarketDataError
 
-from services.logging import log_error, get_logger
+from core.errors import MarketDataDownloadError, NoMarketDataError
+from services.logging import get_logger, log_error
+
 logger = get_logger(__name__)
 
 
@@ -19,7 +20,7 @@ def _retry(fn: Callable[[], Any], attempts: int = 3, base_delay: float = 0.3) ->
         except Exception:  # pragma: no cover - network errors
             if i == attempts - 1:
                 return None
-            time.sleep(base_delay * (2 ** i))
+            time.sleep(base_delay * (2**i))
 
 
 @st.cache_data(ttl=300)
@@ -71,12 +72,12 @@ def fetch_prices(tickers: list[str]) -> pd.DataFrame:
         # On exception, return empty and log once to satisfy tests
         log_error(f"Failed to fetch prices for {', '.join(tickers)}")
         logger.error("Failed to fetch prices", extra={"event": "market_prices", "tickers": tickers})
-        return pd.DataFrame(columns=["ticker", "current_price", "pct_change"]) 
+        return pd.DataFrame(columns=["ticker", "current_price", "pct_change"])
 
     results = []
     if data.empty:
         # Return empty on no data to meet tests expectations
-        return pd.DataFrame(columns=["ticker", "current_price", "pct_change"]) 
+        return pd.DataFrame(columns=["ticker", "current_price", "pct_change"])
 
     # yfinance may return MultiIndex (column level 0 is 'Close', level 1 is ticker)
     if isinstance(data.columns, pd.MultiIndex):
@@ -87,7 +88,11 @@ def fetch_prices(tickers: list[str]) -> pd.DataFrame:
             results.append({"ticker": t, "current_price": price, "pct_change": None})
     else:
         # Either single ticker case OR mock with index as tickers
-        if "Close" in data.columns and len(data.index) == len(tickers) and all(str(ix) in tickers for ix in data.index):
+        if (
+            "Close" in data.columns
+            and len(data.index) == len(tickers)
+            and all(str(ix) in tickers for ix in data.index)
+        ):
             # Index contains tickers; take the close column values per index
             for ix, row in data.iterrows():
                 price = float(row["Close"]) if not pd.isna(row["Close"]) else None
@@ -132,7 +137,10 @@ def get_current_price(ticker: str) -> float | None:
             data = yf.download(ticker, period="1d", progress=False, auto_adjust=True)
     except Exception as e:
         log_error(f"Error getting price for {ticker}: {e}")
-        logger.error("Error getting price", extra={"event": "market_price", "ticker": ticker, "error": str(e)})
+        logger.error(
+            "Error getting price",
+            extra={"event": "market_price", "ticker": ticker, "error": str(e)},
+        )
         return None
     if data.empty or "Close" not in data.columns:
         return None
@@ -208,7 +216,7 @@ def sanitize_market_data(df: pd.DataFrame) -> pd.DataFrame:
         if len(clean) == 1 and "price" in df.columns and "volume" in df.columns:
             candidates = df.copy()
             candidates["ticker"] = candidates["ticker"].astype("string").str.upper()
-            candidates = candidates.dropna(subset=["ticker"]) 
+            candidates = candidates.dropna(subset=["ticker"])
             candidates = candidates[candidates["price"].isna()]
             candidates = candidates[candidates["volume"].notna() & (candidates["volume"] > 0)]
             if not candidates.empty:

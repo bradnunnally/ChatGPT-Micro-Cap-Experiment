@@ -5,13 +5,23 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
+
 from infra.logging import get_logger, new_correlation_id
 
-IGNORE_DIRS = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".vscode", "build", "dist"}
+IGNORE_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".vscode",
+    "build",
+    "dist",
+}
 
-DEFAULT_APP_ENTRY_FILES = [
-    "app.py", "main.py", "streamlit_app.py", "run.py", "cli/main.py"
-]
+DEFAULT_APP_ENTRY_FILES = ["app.py", "main.py", "streamlit_app.py", "run.py", "cli/main.py"]
+
 
 @dataclass(frozen=True)
 class ModuleInfo:
@@ -24,12 +34,14 @@ class ModuleInfo:
     is_package_init: bool
     is_page: bool
 
+
 def rel_module_name(root: Path, file: Path) -> str:
     rel = file.relative_to(root).with_suffix("")
     parts = list(rel.parts)
     if parts[-1] == "__init__":
         parts = parts[:-1]
     return ".".join(parts)
+
 
 def parse_py_file(py_file: Path) -> Tuple[Set[str], bool]:
     imports: Set[str] = set()
@@ -52,14 +64,20 @@ def parse_py_file(py_file: Path) -> Tuple[Set[str], bool]:
                     left = getattr(test, "left", None)
                     comps = getattr(test, "comparators", [])
                     if (
-                        isinstance(left, ast.Name) and left.id == "__name__"
-                        and comps and isinstance(comps[0], (ast.Str, ast.Constant))
-                        and (getattr(comps[0], "s", None) == "__main__" or getattr(comps[0], "value", None) == "__main__")
+                        isinstance(left, ast.Name)
+                        and left.id == "__name__"
+                        and comps
+                        and isinstance(comps[0], (ast.Str, ast.Constant))
+                        and (
+                            getattr(comps[0], "s", None) == "__main__"
+                            or getattr(comps[0], "value", None) == "__main__"
+                        )
                     ):
                         has_main_guard = True
             except Exception:
                 pass
     return imports, has_main_guard
+
 
 def collect_modules(root: Path) -> Dict[str, ModuleInfo]:
     modules: Dict[str, ModuleInfo] = {}
@@ -70,9 +88,11 @@ def collect_modules(root: Path) -> Dict[str, ModuleInfo]:
         if not name:
             continue
         imports, has_main = parse_py_file(path)
-        is_test = ("tests" in path.parts or path.name.startswith("test_") or path.name.endswith("_test.py"))
-        is_script = ("scripts" in path.parts)
-        is_page = ("pages" in path.parts)
+        is_test = (
+            "tests" in path.parts or path.name.startswith("test_") or path.name.endswith("_test.py")
+        )
+        is_script = "scripts" in path.parts
+        is_page = "pages" in path.parts
         modules[name] = ModuleInfo(
             name=name,
             path=path,
@@ -84,6 +104,7 @@ def collect_modules(root: Path) -> Dict[str, ModuleInfo]:
             is_page=is_page,
         )
     return modules
+
 
 def build_graph(mods: Dict[str, ModuleInfo]) -> Dict[str, Set[str]]:
     names = set(mods.keys())
@@ -100,7 +121,10 @@ def build_graph(mods: Dict[str, ModuleInfo]) -> Dict[str, Set[str]]:
         graph[mod] = refs
     return graph
 
-def discover_entries(root: Path, mods: Dict[str, ModuleInfo], provided: List[str]) -> tuple[set[str], set[str], set[str], set[str]]:
+
+def discover_entries(
+    root: Path, mods: Dict[str, ModuleInfo], provided: List[str]
+) -> tuple[set[str], set[str], set[str], set[str]]:
     names = set(mods.keys())
 
     # App entries
@@ -116,7 +140,7 @@ def discover_entries(root: Path, mods: Dict[str, ModuleInfo], provided: List[str
                 except Exception:
                     pass
     for fname in DEFAULT_APP_ENTRY_FILES:
-        p = (root / fname)
+        p = root / fname
         if p.exists():
             name = rel_module_name(root, p)
             if name in names:
@@ -132,11 +156,14 @@ def discover_entries(root: Path, mods: Dict[str, ModuleInfo], provided: List[str
 
     # Test and script entries
     test_entries: Set[str] = {m for m, info in mods.items() if info.is_test}
-    script_entries: Set[str] = {m for m, info in mods.items() if info.is_script and info.has_main_guard}
+    script_entries: Set[str] = {
+        m for m, info in mods.items() if info.is_script and info.has_main_guard
+    }
     return app_entries & names, page_entries & names, test_entries & names, script_entries & names
 
+
 def reachable(graph: Dict[str, Set[str]], roots: Set[str]) -> Set[str]:
-    seen: Set[str] = set()
+    seen: set[str] = set()
     stack = list(roots)
     while stack:
         m = stack.pop()
@@ -146,17 +173,24 @@ def reachable(graph: Dict[str, Set[str]], roots: Set[str]) -> Set[str]:
         stack.extend(graph.get(m, []))
     return seen
 
+
 def main() -> None:
     logger = get_logger(__name__)
-    ap = argparse.ArgumentParser(description="Classify Python modules by reachability (app/pages/tests/scripts).")
+    ap = argparse.ArgumentParser(
+        description="Classify Python modules by reachability (app/pages/tests/scripts)."
+    )
     ap.add_argument("--root", default=".", help="Project root")
-    ap.add_argument("--entry", action="append", help="App entry file(s), relative to root (repeatable)")
+    ap.add_argument(
+        "--entry", action="append", help="App entry file(s), relative to root (repeatable)"
+    )
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
     mods = collect_modules(root)
     graph = build_graph(mods)
-    app_entries, page_entries, test_entries, script_entries = discover_entries(root, mods, args.entry or [])
+    app_entries, page_entries, test_entries, script_entries = discover_entries(
+        root, mods, args.entry or []
+    )
 
     app_seen = reachable(graph, app_entries)
     page_seen = reachable(graph, page_entries)
@@ -177,9 +211,7 @@ def main() -> None:
             extra={
                 "event": "audit_unused_modules",
                 "title": title,
-                "items": [
-                    {"module": m, "path": str(mods[m].path)} for m in items
-                ],
+                "items": [{"module": m, "path": str(mods[m].path)} for m in items],
             },
         )
 
@@ -196,6 +228,7 @@ def main() -> None:
     pp("Only used by tests (not in production)", only_tests)
     pp("Only used by scripts (CLI-only)", only_scripts)
     pp("Unreachable (candidates for legacy removal)", unreachable)
+
 
 if __name__ == "__main__":
     with new_correlation_id():

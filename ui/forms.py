@@ -29,11 +29,11 @@ def validate_buy_form(data: dict) -> bool:
 
         shares = float(data.get("shares", 0))
         price = float(data.get("price", 0))
-        
+
         if shares <= 0:
             st.error("Number of shares must be positive")
             return False
-            
+
         if price <= 0:
             st.error("Price must be positive")
             return False
@@ -157,15 +157,15 @@ def show_buy_form(ticker_default: str = "") -> None:
     # Initialize buy form state in session state
     if "buy_form_open" not in st.session_state:
         st.session_state.buy_form_open = False
-    
+
     # Create a button to toggle the buy form
     if st.button("📈 Log a Buy", use_container_width=True, type="primary"):
         st.session_state.buy_form_open = not st.session_state.buy_form_open
-    
+
     # Show the buy form if it's open
     if st.session_state.buy_form_open:
         st.markdown("### Buy Stock")
-        
+
         with st.form("buy_form", clear_on_submit=True):
             st.text_input(
                 "Ticker",
@@ -198,28 +198,19 @@ def show_buy_form(ticker_default: str = "") -> None:
                 key="b_stop_pct",
             )
             if st.session_state.b_price > 0 and st.session_state.b_stop_pct > 0:
-                calc_stop = st.session_state.b_price * (
-                    1 - st.session_state.b_stop_pct / 100
-                )
+                calc_stop = st.session_state.b_price * (1 - st.session_state.b_stop_pct / 100)
                 st.caption(f"Stop loss price: ${calc_stop:.2f}")
-            
+
             col1, col2 = st.columns(2)
             with col1:
                 submitted = st.form_submit_button(
-                    "Submit Buy", 
-                    on_click=submit_buy,
-                    use_container_width=True,
-                    type="primary"
+                    "Submit Buy", on_click=submit_buy, use_container_width=True, type="primary"
                 )
             with col2:
-                if st.form_submit_button(
-                    "Cancel",
-                    use_container_width=True,
-                    type="secondary"
-                ):
+                if st.form_submit_button("Cancel", use_container_width=True, type="secondary"):
                     st.session_state.buy_form_open = False
                     st.rerun()
-            
+
             if submitted:
                 st.session_state.buy_form_open = False
     # Render any pending feedback message after the form region
@@ -271,15 +262,15 @@ def show_sell_form() -> None:
     # Initialize sell form state in session state
     if "sell_form_open" not in st.session_state:
         st.session_state.sell_form_open = False
-    
+
     # Create a button to toggle the sell form
     if st.button("📉 Log a Sale", use_container_width=True, type="primary"):
         st.session_state.sell_form_open = not st.session_state.sell_form_open
-    
+
     # Show the sell form if it's open
     if st.session_state.sell_form_open:
         st.markdown("### Sell Stock")
-        
+
         holdings = st.session_state.portfolio
         if holdings.empty:
             st.info("You have no holdings to sell.")
@@ -298,7 +289,7 @@ def show_sell_form() -> None:
             "Ticker",
             options=tickers,
             index=0,  # Force default selection to "Select a Ticker"
-            key="s_ticker_select"
+            key="s_ticker_select",
         )
 
         # Only proceed if a real ticker is selected
@@ -309,9 +300,7 @@ def show_sell_form() -> None:
                 st.rerun()
             return
 
-        matching = st.session_state.portfolio[
-            st.session_state.portfolio[COL_TICKER] == selected
-        ]
+        matching = st.session_state.portfolio[st.session_state.portfolio[COL_TICKER] == selected]
 
         # Check if matching shares exist before proceeding
         if matching.empty:
@@ -343,7 +332,7 @@ def show_sell_form() -> None:
         # Now render the form with the dynamic fields
         with st.form("sell_form", clear_on_submit=True):
             st.write(f"**Selling {selected}** (You own {max_shares} shares)")
-            
+
             st.number_input(
                 "Shares to sell",
                 min_value=share_min,
@@ -360,27 +349,18 @@ def show_sell_form() -> None:
                 format="%.2f",
                 key="s_price",
             )
-            
+
             col1, col2 = st.columns(2)
             with col1:
                 submitted = st.form_submit_button(
-                    "Submit Sell", 
-                    on_click=submit_sell,
-                    use_container_width=True,
-                    type="primary"
+                    "Submit Sell", on_click=submit_sell, use_container_width=True, type="primary"
                 )
             with col2:
-                if st.form_submit_button(
-                    "Cancel",
-                    use_container_width=True,
-                    type="secondary"
-                ):
+                if st.form_submit_button("Cancel", use_container_width=True, type="secondary"):
                     st.session_state.sell_form_open = False
                     st.rerun()
-            
+
             if submitted:
                 st.session_state.sell_form_open = False
     # Render any pending feedback message after the form region
     _render_feedback()
-
-

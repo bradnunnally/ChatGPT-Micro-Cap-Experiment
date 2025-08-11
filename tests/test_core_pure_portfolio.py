@@ -28,9 +28,9 @@ def test_apply_buy_new_and_update():
 
 
 def test_apply_sell_and_pnl():
-    df = pd.DataFrame([
-        {"ticker": "AAPL", "shares": 10.0, "buy_price": 100.0, "cost_basis": 1000.0}
-    ])
+    df = pd.DataFrame(
+        [{"ticker": "AAPL", "shares": 10.0, "buy_price": 100.0, "cost_basis": 1000.0}]
+    )
     out, pnl = apply_sell(df, "AAPL", shares=4, price=150.0)
     assert pnl == pytest.approx(200.0)
     assert out.iloc[0]["shares"] == 6.0
@@ -42,19 +42,30 @@ def test_apply_sell_and_pnl():
 
 
 def test_compute_snapshot_and_helpers():
-    df = pd.DataFrame([
-        {"ticker": "AAPL", "shares": 10.0, "buy_price": 100.0, "stop_loss": 90.0},
-        {"ticker": "MSFT", "shares": 5.0, "buy_price": 200.0, "stop_loss": 180.0},
-    ])
+    df = pd.DataFrame(
+        [
+            {"ticker": "AAPL", "shares": 10.0, "buy_price": 100.0, "stop_loss": 90.0},
+            {"ticker": "MSFT", "shares": 5.0, "buy_price": 200.0, "stop_loss": 180.0},
+        ]
+    )
     prices = {"AAPL": 110.0, "MSFT": 150.0}
     snap = compute_snapshot(df, prices, cash=1000.0, date="2025-08-11")
 
     assert set(snap.columns) == {
-        "Date", "Ticker", "Shares", "Cost Basis", "Stop Loss", "Current Price",
-        "Total Value", "PnL", "Action", "Cash Balance", "Total Equity"
+        "Date",
+        "Ticker",
+        "Shares",
+        "Cost Basis",
+        "Stop Loss",
+        "Current Price",
+        "Total Value",
+        "PnL",
+        "Action",
+        "Cash Balance",
+        "Total Equity",
     }
     total_row = snap[snap["Ticker"] == "TOTAL"].iloc[0]
-    assert total_row["Total Value"] == pytest.approx(10*110 + 5*150)
+    assert total_row["Total Value"] == pytest.approx(10 * 110 + 5 * 150)
     assert total_row["Total Equity"] == pytest.approx(total_row["Total Value"] + 1000.0)
 
     assert calculate_position_value(3, 7.5) == 22.5

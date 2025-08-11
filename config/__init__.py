@@ -13,24 +13,23 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import ModuleType
 
-# Attempt to locate the top-level config.py beside the repository root.
+# Attempt to locate the top-level legacy_config.py beside the repository root.
 _root = Path(__file__).resolve().parent.parent
-_legacy_path = _root / "config.py"
+_legacy_path = _root / "legacy_config.py"
 
 if _legacy_path.exists():
-	_spec = spec_from_file_location("_legacy_config", _legacy_path)
-	if _spec and _spec.loader:
-		_legacy: ModuleType = module_from_spec(_spec)
-		_spec.loader.exec_module(_legacy)
-		# Re-export all public attributes
-		__all__ = [n for n in dir(_legacy) if not n.startswith("_")]
-		globals().update({n: getattr(_legacy, n) for n in __all__})
-	else:
-		__all__: list[str] = []
+    _spec = spec_from_file_location("_legacy_config", _legacy_path)
+    if _spec and _spec.loader:
+        _legacy: ModuleType = module_from_spec(_spec)
+        _spec.loader.exec_module(_legacy)
+        # Re-export all public attributes
+        __all__ = [n for n in dir(_legacy) if not n.startswith("_")]
+        globals().update({n: getattr(_legacy, n) for n in __all__})
+    else:
+        __all__: list[str] = []
 else:
-	__all__ = []
+    __all__ = []
 
 # Keep settings submodule available via `from config.settings import settings`.
 # No explicit import here to avoid import-time side effects; normal submodule
 # import resolution will find `config/settings.py` when referenced.
-

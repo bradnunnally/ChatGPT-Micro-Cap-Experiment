@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Optional
 
 import pandas as pd
@@ -8,13 +7,19 @@ import streamlit as st
 import data.portfolio as portfolio_data
 from config import COL_COST, COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY
 from data.db import get_connection, init_db
-from services.core.repository import PortfolioRepository
 from services.core.portfolio_service import (
     apply_buy as _apply_buy,
+)
+from services.core.portfolio_service import (
     apply_sell as _apply_sell,
+)
+from services.core.portfolio_service import (
     calculate_pnl as _core_calculate_pnl,
+)
+from services.core.portfolio_service import (
     calculate_position_value as _core_calculate_position_value,
 )
+from services.core.repository import PortfolioRepository
 from services.core.validation import (
     validate_shares as _core_validate_shares,
 )
@@ -22,9 +27,8 @@ from services.core.validation import (
     validate_ticker as _core_validate_ticker,
 )
 from services.exceptions.validation import ValidationError as _ValidationError
-from services.logging import log_error, audit_logger, get_logger
+from services.logging import audit_logger, get_logger, log_error
 from services.market import get_current_price, get_day_high_low  # noqa: F401 (patched by tests)
-
 
 logger = get_logger(__name__)
 
@@ -71,35 +75,45 @@ def manual_buy(
     session_mode = portfolio_df is None or cash is None
     if session_mode:
         if not hasattr(st.session_state, "portfolio"):
-            st.session_state.portfolio = pd.DataFrame(columns=[COL_TICKER, COL_SHARES, COL_STOP, COL_PRICE, COL_COST])
+            st.session_state.portfolio = pd.DataFrame(
+                columns=[COL_TICKER, COL_SHARES, COL_STOP, COL_PRICE, COL_COST]
+            )
         portfolio_df = getattr(st.session_state, "portfolio")
         # Fallback to 10,000 if session state isn't fully active in test context
         cash = float(getattr(st.session_state, "cash", 10000.0))
     if shares <= 0 or price <= 0:
         msg = "Shares and price must be positive."
         log_error(msg)
-        audit_logger.trade("buy", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
-        return (False if session_mode else (False, msg, portfolio_df, cash))
+        audit_logger.trade(
+            "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
+        )
+        return False if session_mode else (False, msg, portfolio_df, cash)
     # For session_mode tests, skip day range validation; rely on provided price
     if not session_mode:
         try:
             day_high, day_low = get_day_high_low(ticker)
         except Exception as exc:  # pragma: no cover - network errors
             log_error(str(exc))
-            audit_logger.trade("buy", ticker=ticker, shares=shares, price=price, status="failure", reason=str(exc))
-            return (False if session_mode else (False, str(exc), portfolio_df, cash))
+            audit_logger.trade(
+                "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=str(exc)
+            )
+            return False if session_mode else (False, str(exc), portfolio_df, cash)
         if not (day_low <= price <= day_high):
             msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
             log_error(msg)
-            audit_logger.trade("buy", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
-            return (False if session_mode else (False, msg, portfolio_df, cash))
+            audit_logger.trade(
+                "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
+            )
+            return False if session_mode else (False, msg, portfolio_df, cash)
 
     cost = price * shares
     if cost > cash:
         reason = "Insufficient cash for this trade."
         log_error(reason)
-        audit_logger.trade("buy", ticker=ticker, shares=shares, price=price, status="failure", reason=reason)
-        return (False if session_mode else (False, reason, portfolio_df, cash))
+        audit_logger.trade(
+            "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=reason
+        )
+        return False if session_mode else (False, reason, portfolio_df, cash)
 
     # Record trade log only in full app mode
     if not session_mode:
@@ -117,11 +131,13 @@ def manual_buy(
                 repo.append_trade_log(log)
             except Exception as exc:  # pragma: no cover
                 log_error(str(exc))
-                logger.exception("Repository append_trade_log failed", extra={"event": "trade_log", "action": "buy", "ticker": ticker})
+                logger.exception(
+                    "Repository append_trade_log failed",
+                    extra={"event": "trade_log", "action": "buy", "ticker": ticker},
+                )
         else:
             append_trade_log(log)
 
-    mask = portfolio_df[COL_TICKER] == ticker
     # Delegate portfolio math to pure function for consistency
     portfolio_df = _apply_buy(
         portfolio_df,
@@ -138,7 +154,10 @@ def manual_buy(
             repo.save_snapshot(portfolio_df, cash)
         except Exception as exc:  # pragma: no cover
             log_error(str(exc))
-            logger.exception("Repository save_snapshot failed", extra={"event": "snapshot", "phase": "buy", "ticker": ticker})
+            logger.exception(
+                "Repository save_snapshot failed",
+                extra={"event": "snapshot", "phase": "buy", "ticker": ticker},
+            )
     else:
         # Call through module to respect test patches on data.portfolio.save_portfolio_snapshot
         portfolio_data.save_portfolio_snapshot(portfolio_df, cash)
@@ -168,39 +187,53 @@ def manual_sell(
     ticker = ticker.upper()
     session_mode = portfolio_df is None or cash is None
     if session_mode:
-        portfolio_df = getattr(st.session_state, "portfolio", pd.DataFrame(columns=[COL_TICKER, COL_SHARES, COL_STOP, COL_PRICE, COL_COST]))
+        portfolio_df = getattr(
+            st.session_state,
+            "portfolio",
+            pd.DataFrame(columns=[COL_TICKER, COL_SHARES, COL_STOP, COL_PRICE, COL_COST]),
+        )
         cash = float(getattr(st.session_state, "cash", 10000.0))
     if shares <= 0 or price <= 0:
         msg = "Shares and price must be positive."
         log_error(msg)
-        audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
-        return (False if session_mode else (False, msg, portfolio_df, cash))
+        audit_logger.trade(
+            "sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
+        )
+        return False if session_mode else (False, msg, portfolio_df, cash)
     if ticker not in portfolio_df[COL_TICKER].values:
         msg = "Ticker not in portfolio."
         log_error(msg)
-        audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
-        return (False if session_mode else (False, msg, portfolio_df, cash))
+        audit_logger.trade(
+            "sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
+        )
+        return False if session_mode else (False, msg, portfolio_df, cash)
 
     if not session_mode:
         try:
             day_high, day_low = get_day_high_low(ticker)
         except Exception as exc:  # pragma: no cover - network errors
             log_error(str(exc))
-            audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="failure", reason=str(exc))
-            return (False if session_mode else (False, str(exc), portfolio_df, cash))
+            audit_logger.trade(
+                "sell", ticker=ticker, shares=shares, price=price, status="failure", reason=str(exc)
+            )
+            return False if session_mode else (False, str(exc), portfolio_df, cash)
         if not (day_low <= price <= day_high):
             msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
             log_error(msg)
-            audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
-            return (False if session_mode else (False, msg, portfolio_df, cash))
+            audit_logger.trade(
+                "sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
+            )
+            return False if session_mode else (False, msg, portfolio_df, cash)
 
     row = portfolio_df[portfolio_df[COL_TICKER] == ticker].iloc[0]
     total_shares = float(row[COL_SHARES])
     if shares > total_shares:
         msg = f"Trying to sell {shares} shares but only own {total_shares}."
         log_error(msg)
-        audit_logger.trade("sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg)
-        return (False if session_mode else (False, msg, portfolio_df, cash))
+        audit_logger.trade(
+            "sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
+        )
+        return False if session_mode else (False, msg, portfolio_df, cash)
 
     buy_price = float(row[COL_PRICE])
     # Use pure function for pnl calculation
@@ -224,7 +257,10 @@ def manual_sell(
                 repo.append_trade_log(log)
             except Exception as exc:  # pragma: no cover
                 log_error(str(exc))
-                logger.exception("Repository append_trade_log failed", extra={"event": "trade_log", "action": "sell", "ticker": ticker})
+                logger.exception(
+                    "Repository append_trade_log failed",
+                    extra={"event": "trade_log", "action": "sell", "ticker": ticker},
+                )
         else:
             append_trade_log(log)
 
@@ -243,7 +279,10 @@ def manual_sell(
             repo.save_snapshot(portfolio_df, cash)
         except Exception as exc:  # pragma: no cover
             log_error(str(exc))
-            logger.exception("Repository save_snapshot failed", extra={"event": "snapshot", "phase": "sell", "ticker": ticker})
+            logger.exception(
+                "Repository save_snapshot failed",
+                extra={"event": "snapshot", "phase": "sell", "ticker": ticker},
+            )
     else:
         # Call through module to respect test patches on data.portfolio.save_portfolio_snapshot
         portfolio_data.save_portfolio_snapshot(portfolio_df, cash)
@@ -277,12 +316,14 @@ def validate_cash_balance(required: float) -> bool:
 
 
 def aggregate_positions(df: pd.DataFrame) -> pd.DataFrame:
-    grouped = df.groupby("ticker", as_index=False).agg({
-        "shares": "sum",
-        "stop_loss": "last",
-        "buy_price": "mean",
-        "cost_basis": "sum",
-    })
+    grouped = df.groupby("ticker", as_index=False).agg(
+        {
+            "shares": "sum",
+            "stop_loss": "last",
+            "buy_price": "mean",
+            "cost_basis": "sum",
+        }
+    )
     return grouped
 
 
@@ -348,6 +389,7 @@ def execute_buy(trade_data: dict) -> bool:
 
         # Add to portfolio
         from services.time import Clock
+
         new_position = pd.DataFrame(
             {
                 "Ticker": [trade_data["ticker"]],
@@ -360,9 +402,7 @@ def execute_buy(trade_data: dict) -> bool:
         if st.session_state.portfolio.empty:
             st.session_state.portfolio = new_position
         else:
-            st.session_state.portfolio = pd.concat(
-                [st.session_state.portfolio, new_position]
-            )
+            st.session_state.portfolio = pd.concat([st.session_state.portfolio, new_position])
 
         return True
 

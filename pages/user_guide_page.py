@@ -18,4 +18,3 @@ navbar(Path(__file__).name)
 st.header("User Guide")
 
 show_user_guide()
-

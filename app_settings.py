@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,7 +24,9 @@ class Paths(BaseModel):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", env_prefix="APP_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", env_prefix="APP_", extra="ignore"
+    )
 
     # Core
     base_dir: Path = Field(default_factory=lambda: Path(__file__).resolve().parent)
@@ -40,9 +42,13 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = Field(default=300, ge=0)
     environment: str = Field(default="development")
     # Trading calendar
-    trading_holidays: List[str] = Field(default_factory=list, description="List of YYYY-MM-DD holiday dates when market is closed")
+    trading_holidays: List[str] = Field(
+        default_factory=list, description="List of YYYY-MM-DD holiday dates when market is closed"
+    )
 
-    @field_validator("data_dir", "db_file", "portfolio_csv", "trade_log_csv", "watchlist_file", mode="after")
+    @field_validator(
+        "data_dir", "db_file", "portfolio_csv", "trade_log_csv", "watchlist_file", mode="after"
+    )
     @classmethod
     def resolve_paths(cls, v: Path | str, info: ValidationInfo) -> Path:
         base_dir: Path = info.data.get("base_dir")  # type: ignore[assignment]

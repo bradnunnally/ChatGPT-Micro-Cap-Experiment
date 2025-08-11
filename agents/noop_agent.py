@@ -1,6 +1,8 @@
-from datetime import datetime
 import json
+from datetime import datetime
+
 from data.db import get_connection, init_db
+
 
 class NoopAgent:
     name = "NoopAgent"

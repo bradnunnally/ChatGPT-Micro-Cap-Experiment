@@ -19,6 +19,7 @@ import sys
 import trace
 
 import pytest
+
 from infra.logging import get_logger, new_correlation_id
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -96,7 +97,11 @@ def main() -> int:
             )
         logger.info(
             "total coverage",
-            extra={"event": "test_coverage_total", "coverage_pct": round(coverage_pct, 2), "min_required": args.min},
+            extra={
+                "event": "test_coverage_total",
+                "coverage_pct": round(coverage_pct, 2),
+                "min_required": args.min,
+            },
         )
 
         if coverage_pct < args.min:

@@ -1,7 +1,7 @@
-from services.time import get_clock
 from pathlib import Path
 
 from portfolio import PORTFOLIO_COLUMNS
+from services.time import get_clock
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"

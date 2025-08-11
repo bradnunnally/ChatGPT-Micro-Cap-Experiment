@@ -76,5 +76,3 @@ def navbar(active_page: str) -> None:
             """,
             unsafe_allow_html=True,
         )
-
-

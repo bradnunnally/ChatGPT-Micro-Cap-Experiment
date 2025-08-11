@@ -30,9 +30,15 @@ if __name__ == "__main__":
 
     if len(sys.argv) < 2:
         logger = get_logger(__name__)
-        logger.error("Usage: restore_db.py /path/to/backup.sqlite", extra={"event": "db_restore", "status": "usage_error"})
+        logger.error(
+            "Usage: restore_db.py /path/to/backup.sqlite",
+            extra={"event": "db_restore", "status": "usage_error"},
+        )
         raise SystemExit(2)
     logger = get_logger(__name__)
     with new_correlation_id():
         restore(sys.argv[1])
-        logger.info("Restore complete", extra={"event": "db_restore", "status": "success", "backup": sys.argv[1]})
+        logger.info(
+            "Restore complete",
+            extra={"event": "db_restore", "status": "success", "backup": sys.argv[1]},
+        )

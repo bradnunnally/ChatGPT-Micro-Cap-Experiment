@@ -5,7 +5,7 @@ import os
 import random
 import time
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -16,7 +16,6 @@ from config.settings import settings
 from core.errors import (
     MarketDataDownloadError,
     NoMarketDataError,
-    ValidationError,
 )
 from infra.logging import get_logger
 from services.core.validation import validate_ticker
@@ -111,7 +110,11 @@ class MarketDataService:
             state.opened_at = self._now()
             self._logger.error(
                 "circuit open",
-                extra={"event": "market_circuit_open", "ticker": ticker, "failures": state.failures},
+                extra={
+                    "event": "market_circuit_open",
+                    "ticker": ticker,
+                    "failures": state.failures,
+                },
             )
         self._circuit[ticker] = state
 
@@ -200,7 +203,7 @@ class MarketDataService:
                 last_exc = e
                 self._record_failure(symbol)
                 # Backoff with jitter
-                delay = self._backoff_base * (2 ** attempt)
+                delay = self._backoff_base * (2**attempt)
                 delay *= 1 + random.uniform(-0.2, 0.2)
                 time.sleep(max(0.0, delay))
                 attempt += 1

@@ -1,4 +1,3 @@
-
 import pytest
 from services.core.market_data_service import MarketDataService
 from services.time import Clock
@@ -7,16 +6,19 @@ import datetime
 import pandas as pd
 import time
 
+
 class DummyPriceProvider:
     def __init__(self, price=123.45, fail=False):
         self.price = price
         self.fail = fail
         self.calls = 0
+
     def __call__(self, ticker):
         self.calls += 1
         if self.fail:
             raise Exception("fail")
         return self.price
+
 
 def test_market_data_service_retry_and_backoff_and_fallback(monkeypatch, tmp_path):
     # Covers retry/backoff and fallback logic for MarketDataService
@@ -24,13 +26,18 @@ def test_market_data_service_retry_and_backoff_and_fallback(monkeypatch, tmp_pat
     class DummyYF:
         def __init__(self):
             self.calls = 0
+
         def download(self, *a, **kw):
             self.calls += 1
             raise Exception("network fail")
+
         class Ticker:
-            def __init__(self, symbol): pass
+            def __init__(self, symbol):
+                pass
+
             def history(self, period):
                 raise Exception("network fail")
+
     dummy_yf = DummyYF()
     monkeypatch.setattr("services.core.market_data_service.yf", dummy_yf)
     mds = MarketDataService(price_provider=None)
@@ -49,12 +56,17 @@ def test_market_data_service_retry_and_backoff_and_fallback(monkeypatch, tmp_pat
     class DummyYF2:
         def download(self, *a, **kw):
             return pd.DataFrame({"Close": []})
+
         class Ticker:
-            def __init__(self, symbol): pass
+            def __init__(self, symbol):
+                pass
+
             def history(self, period):
                 return pd.DataFrame({"Close": []})
+
     monkeypatch.setattr("services.core.market_data_service.yf", DummyYF2())
     assert mds.get_price("FAIL4") is None
+
 
 def test_market_data_service_cache_and_fallback():
     provider = DummyPriceProvider(price=100)
@@ -76,6 +88,7 @@ def test_market_data_service_error_and_retry():
 def test_market_data_service_daily_cache_rollover(tmp_path):
     # Use a temp directory for disk cache
     from services.core.market_data_service import MarketDataService, CircuitState
+
     provider = DummyPriceProvider(price=42)
     mds = MarketDataService(price_provider=provider)
     # Patch disk cache dir to tmp_path

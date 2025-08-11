@@ -10,10 +10,10 @@ import typer
 
 # Local imports
 from app_settings import settings
-from data.db import get_connection, init_db
 from data import portfolio as portfolio_data
-from services.time import get_clock, TradingCalendar
+from data.db import get_connection, init_db
 from infra.logging import get_logger, new_correlation_id
+from services.time import TradingCalendar, get_clock
 
 app = typer.Typer(help="CLI tools for portfolio operations (snapshots, rebalance, import, export)")
 
@@ -24,6 +24,7 @@ def _ensure_db_selected(db_file: Optional[Path]):
     if db_file:
         try:
             from data import db as db_module
+
             db_module.DB_FILE = Path(db_file)
         except Exception:
             pass
@@ -63,14 +64,13 @@ def snapshot(
         typer.echo(f"Skipping snapshot: {today} is not a trading day")
         raise typer.Exit(code=0)
 
-    with get_connection() as conn:
-        # Load current state
-        res = portfolio_data.load_portfolio()
-        portfolio_df, cash, _ = res
-        df = portfolio_data.save_portfolio_snapshot(portfolio_df, float(cash))
+    # Load current state
+    res = portfolio_data.load_portfolio()
+    portfolio_df, cash, _ = res
+    df = portfolio_data.save_portfolio_snapshot(portfolio_df, float(cash))
 
-        # Also return/save snapshot info
-        typer.echo(f"Snapshot created for {today} with {len(df)} rows (incl. TOTAL)")
+    # Also return/save snapshot info
+    typer.echo(f"Snapshot created for {today} with {len(df)} rows (incl. TOTAL)")
 
 
 @app.command()
