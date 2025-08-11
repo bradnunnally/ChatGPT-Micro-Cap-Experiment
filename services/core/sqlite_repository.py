@@ -23,7 +23,7 @@ def _enable_wal(conn: sqlite3.Connection) -> None:
         pass
 
 
-class SQLitePortfolioRepository(PortfolioRepository):
+class SqlitePortfolioRepository(PortfolioRepository):
     def __init__(self, db_path: str | None = None) -> None:
         self.db_path = str(db_path) if db_path else str(DB_FILE)
 

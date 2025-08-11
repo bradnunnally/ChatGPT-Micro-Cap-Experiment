@@ -39,6 +39,7 @@ class MarketDataService:
         backoff_base: float = 0.3,
         circuit_fail_threshold: int = 3,
         circuit_cooldown: float = 60.0,
+        price_provider: callable = None,
     ) -> None:
         self._logger = get_logger(__name__)
         self._ttl = ttl_seconds if ttl_seconds is not None else int(settings.cache_ttl_seconds)
@@ -51,6 +52,7 @@ class MarketDataService:
         self._cache = {}  # symbol -> (price, ts)
         self._circuit = {}  # symbol -> CircuitState
         self._last_call_ts = 0.0
+        self._price_provider = price_provider
 
         # Optional on-disk cache per day
         self._disk_cache_dir = Path(settings.paths.data_dir) / "price_cache"
@@ -130,6 +132,13 @@ class MarketDataService:
         cached = self._cache.get(symbol)
         if cached and (now_ts - cached[1]) < self._ttl:
             return cached[0]
+
+        # If a test price provider is injected, use it (for unit tests)
+        if self._price_provider is not None:
+            price = self._price_provider(symbol)
+            self._cache[symbol] = (price, now_ts)
+            self._record_success(symbol, price)
+            return price
 
         # Refresh on-disk cache day rollover
         day_now = datetime.now(UTC).strftime("%Y-%m-%d")

@@ -1,3 +1,5 @@
+coverage:
+	. .venv/bin/activate && pytest --cov=services --cov=data --cov=core --cov-report=term-missing --cov-fail-under=80
 .PHONY: install lint test run audit
 
 install:
