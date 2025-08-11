@@ -21,6 +21,9 @@ run:
 migrate:
 	. .venv/bin/activate && python apply_migrations.py
 
+csv-migrate:
+	. .venv/bin/activate && python scripts/migrate_csv_to_sqlite.py
+
 backup:
 	. .venv/bin/activate && python scripts/backup_db.py
 

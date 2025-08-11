@@ -105,7 +105,8 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
         elif set(["ticker", "current_price"]).issubset(set(data.columns)):
             # Our services.market.fetch_prices shape
             for _, r in data.iterrows():
-                prices[str(r["ticker"])]= float(r["current_price"]) if pd.notna(r["current_price"]) else 0.0
+                cur = r.get("current_price") if hasattr(r, "get") else r["current_price"]
+                prices[str(r["ticker"])]= float(cur) if pd.notna(cur) else 0.0
         else:
             # Single ticker DataFrame with Close column
             val = data.get("Close", pd.Series([None])).iloc[-1]
@@ -118,7 +119,10 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
         stop = float(row[COL_STOP])
         buy_price = float(row[COL_PRICE])
 
-        price = prices.get(ticker, 0.0)
+        # Prefer fetched price; if missing or invalid, use 0.0 so tests can assert empty price paths
+        price = prices.get(ticker)
+        if price is None or pd.isna(price) or price <= 0:
+            price = 0.0
         value = round(price * shares, 2)
         pnl = round((price - buy_price) * shares, 2)
         total_value += value
