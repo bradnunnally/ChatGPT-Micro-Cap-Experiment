@@ -2,7 +2,7 @@ import pandas as pd
 
 from config import TODAY, COL_TICKER, COL_SHARES, COL_STOP, COL_PRICE, COL_COST
 from portfolio import ensure_schema
-from services.market import fetch_prices
+from services.market import fetch_prices, get_last_price
 from data.db import init_db, get_connection
 
 
@@ -52,7 +52,22 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
         stop = float(row[COL_STOP])
         buy_price = float(row[COL_PRICE])
 
-        price = prices.get(ticker, 0.0)
+        # Choose current price with robust fallback order:
+        # 1) batch-fetched price; 2) per-ticker last close; 3) buy_price
+        source = "Live"
+        price = prices.get(ticker)
+        if price is None or pd.isna(price) or float(price) == 0.0:
+            # Try per-ticker fallback via yfinance Ticker().history/fast_info
+            try:
+                last = get_last_price(str(ticker))
+            except Exception:
+                last = None
+            if last is not None:
+                price = float(last)
+                source = "Last Close"
+            else:
+                price = buy_price
+                source = "Manual"
         value = round(price * shares, 2)
         pnl = round((price - buy_price) * shares, 2)
         total_value += value
@@ -69,6 +84,7 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
                 "Total Value": value,
                 "PnL": pnl,
                 "Action": "HOLD",
+                "Price Source": source,
                 "Cash Balance": "",
                 "Total Equity": "",
             }
@@ -84,6 +100,7 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
         "Total Value": round(total_value, 2),
         "PnL": round(total_pnl, 2),
         "Action": "",
+        "Price Source": "",
         "Cash Balance": round(cash, 2),
         "Total Equity": round(total_value + cash, 2),
     }
@@ -91,7 +108,7 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
 
     df = pd.DataFrame(results)
 
-    # Rename columns to match the portfolio_history table schema
+    # Create a lower-case version for DB insertion and returning to UI
     df = df.rename(
         columns={
             "Date": "date",
@@ -103,13 +120,14 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
             "Total Value": "total_value",
             "PnL": "pnl",
             "Action": "action",
+            "Price Source": "price_source",
             "Cash Balance": "cash_balance",
             "Total Equity": "total_equity",
         }
     )
 
-    # Ensure column order aligns with the database schema
-    df = df[
+    # Prepare DB-aligned DataFrame (subset to schema columns only)
+    df_db = df[
         [
             "date",
             "ticker",
@@ -145,6 +163,7 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
 
         # Store daily snapshot
         conn.execute("DELETE FROM portfolio_history WHERE date = ?", (TODAY,))
-        df.to_sql("portfolio_history", conn, if_exists="append", index=False)
+        df_db.to_sql("portfolio_history", conn, if_exists="append", index=False)
 
+    # Return the UI-friendly DataFrame (lowercase keys plus price_source)
     return df

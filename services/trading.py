@@ -53,21 +53,39 @@ def manual_buy(
         msg = "Shares and price must be positive."
         log_error(msg)
         return False, msg, portfolio_df, cash
+    # Try to fetch today's range; if unavailable, allow manual price as fallback
+    has_market_data = True
     try:
         day_high, day_low = get_day_high_low(ticker)
+    except ValueError as exc:
+        # Specific graceful handling for missing data
+        if "No market data available" in str(exc):
+            has_market_data = False
+            day_high = day_low = None
+        else:  # Other value errors should still fail
+            log_error(str(exc))
+            return False, str(exc), portfolio_df, cash
     except Exception as exc:  # pragma: no cover - network errors
         log_error(str(exc))
         return False, str(exc), portfolio_df, cash
 
-    if not (day_low <= price <= day_high):
-        msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
-        log_error(msg)
-        return False, msg, portfolio_df, cash
+    # Only enforce range validation when we actually have market data
+    if has_market_data:
+        if not (day_low <= price <= day_high):
+            msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
+            log_error(msg)
+            return False, msg, portfolio_df, cash
 
     cost = price * shares
     if cost > cash:
         log_error("Insufficient cash for this trade.")
         return False, "Insufficient cash for this trade.", portfolio_df, cash
+
+    reason = (
+        "MANUAL BUY - New position"
+        if has_market_data
+        else "MANUAL BUY - New position (no market data)"
+    )
 
     log = {
         "Date": TODAY,
@@ -76,7 +94,7 @@ def manual_buy(
         "Buy Price": price,
         "Cost Basis": cost,
         "PnL": 0.0,
-        "Reason": "MANUAL BUY - New position",
+        "Reason": reason,
     }
     append_trade_log(log)
 
@@ -89,9 +107,13 @@ def manual_buy(
             COL_PRICE: price,
             COL_COST: cost,
         }
-        portfolio_df = pd.concat(
-            [portfolio_df, pd.DataFrame([new_row])], ignore_index=True
-        )
+        try:
+            portfolio_df = portfolio_df.copy()
+            portfolio_df.loc[len(portfolio_df)] = new_row
+        except Exception:
+            portfolio_df = pd.concat(
+                [portfolio_df, pd.DataFrame([new_row])], ignore_index=True
+            )
     else:
         idx = portfolio_df[mask].index[0]
         current_shares = float(portfolio_df.at[idx, COL_SHARES])
@@ -128,16 +150,25 @@ def manual_sell(
         log_error(msg)
         return False, msg, portfolio_df, cash
 
+    has_market_data = True
     try:
         day_high, day_low = get_day_high_low(ticker)
+    except ValueError as exc:
+        if "No market data available" in str(exc):
+            has_market_data = False
+            day_high = day_low = None
+        else:
+            log_error(str(exc))
+            return False, str(exc), portfolio_df, cash
     except Exception as exc:  # pragma: no cover - network errors
         log_error(str(exc))
         return False, str(exc), portfolio_df, cash
 
-    if not (day_low <= price <= day_high):
-        msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
-        log_error(msg)
-        return False, msg, portfolio_df, cash
+    if has_market_data:
+        if not (day_low <= price <= day_high):
+            msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
+            log_error(msg)
+            return False, msg, portfolio_df, cash
 
     row = portfolio_df[portfolio_df[COL_TICKER] == ticker].iloc[0]
     total_shares = float(row[COL_SHARES])

@@ -110,6 +110,8 @@ def show_buy_form(ticker_default: str = "") -> None:
             st.session_state.pop("b_stop_pct", None)
             # Close the buy form after successful submission
             st.session_state.buy_form_open = False
+            # Immediately refresh to show updated portfolio
+            st.rerun()
         else:
             st.session_state.feedback = ("error", msg)
 
