@@ -1,7 +1,7 @@
 """Navigation bar component used across pages."""
 
-from pathlib import Path
 import base64
+from pathlib import Path
 
 import streamlit as st
 

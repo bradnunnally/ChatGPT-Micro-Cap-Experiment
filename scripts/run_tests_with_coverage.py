@@ -20,7 +20,6 @@ import trace
 
 import pytest
 
-
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
@@ -55,7 +54,7 @@ def compute_coverage(results: trace.CoverageResults) -> tuple[dict[str, tuple[in
         try:
             with open(filename, "r", encoding="utf-8") as f:
                 # Count only non-empty, non-comment lines as executable.
-                lines = [l for l in f if l.strip() and not l.strip().startswith("#")]
+                lines = [line for line in f if line.strip() and not line.strip().startswith("#")]
         except OSError:
             continue
         total = len(lines)

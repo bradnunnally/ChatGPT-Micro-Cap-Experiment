@@ -281,22 +281,22 @@ class TestMarketDataIntegration:
 
 class TestMarketValidation:
     """Test market data validation and sanitization."""
-    
+
     def test_ticker_format_validation(self):
         """Test ticker symbol format validation."""
         # Valid ticker formats
         valid_tickers = ['AAPL', 'GOOGL', 'BRK.A', 'BRK.B', 'MSFT']
-        
+
         for ticker in valid_tickers:
             assert isinstance(ticker, str)
             assert len(ticker) >= 1
             assert ticker.isupper()
             # Allow letters, numbers, and periods
             assert all(c.isalnum() or c == '.' for c in ticker)
-        
+
         # Invalid ticker formats
         invalid_tickers = ['', 'aapl', '12345', '@#$%', None]
-        
+
         for ticker in invalid_tickers:
             if ticker is None:
                 assert ticker is None
@@ -308,30 +308,31 @@ class TestMarketValidation:
                 # Check for invalid characters or format
                 has_invalid_chars = any(not (c.isalnum() or c == '.') for c in ticker)
                 is_lowercase = ticker.islower()
-                assert has_invalid_chars or is_lowercase
-    
+                # Also consider purely numeric strings as invalid
+                assert has_invalid_chars or is_lowercase or ticker.isdigit()
+
     def test_price_range_validation(self):
         """Test price range validation."""
         # Reasonable price ranges for validation
         min_price = 0.01
         max_price = 100000.0
-        
+
         # Valid prices
         valid_prices = [0.01, 1.0, 150.25, 2650.50, 10000.0]
-        
+
         for price in valid_prices:
             assert min_price <= price <= max_price
             assert isinstance(price, (int, float))
-        
+
         # Invalid prices
         invalid_prices = [0, -1.0, 100001.0, None, 'invalid']
-        
+
         for price in invalid_prices:
             if price is None or not isinstance(price, (int, float)):
                 assert not isinstance(price, (int, float)) or price is None
             else:
                 assert not (min_price <= price <= max_price)
-    
+
     def test_data_sanitization(self):
         """Test market data sanitization."""
         # Raw market data that might need cleaning
@@ -340,23 +341,23 @@ class TestMarketValidation:
             'price': [150.25, 2650.50, None, 400.0],
             'volume': [1000000, 0, 500000, -100]
         })
-        
+
         # Sanitization logic
         clean_data = raw_data.copy()
-        
+
         # Clean ticker symbols
         clean_data['ticker'] = clean_data['ticker'].str.upper()
         clean_data = clean_data.dropna(subset=['ticker'])
-        
+
         # Clean prices
         clean_data = clean_data.dropna(subset=['price'])
         clean_data = clean_data[clean_data['price'] > 0]
-        
+
         # Clean volume
         clean_data = clean_data[clean_data['volume'] > 0]
-        
-        # Verify cleaned data
-        assert len(clean_data) == 2  # Only AAPL and MSFT should remain
+
+        # Verify cleaned data: only AAPL should remain after cleaning
+        assert len(clean_data) == 1
         assert all(clean_data['ticker'].str.isupper())
         assert all(clean_data['price'] > 0)
         assert all(clean_data['volume'] > 0)

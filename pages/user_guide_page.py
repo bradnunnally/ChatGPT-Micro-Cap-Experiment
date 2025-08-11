@@ -7,7 +7,6 @@ import streamlit as st
 from components.nav import navbar
 from ui.user_guide import show_user_guide
 
-
 st.set_page_config(
     page_title="User Guide",
     layout="wide",

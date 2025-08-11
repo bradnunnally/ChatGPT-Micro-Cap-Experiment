@@ -1,12 +1,11 @@
 import streamlit as st
-import pandas as pd
 
 from config import COL_TICKER
 from services.market import fetch_price
 from services.watchlist_service import (
     add_to_watchlist,
-    remove_from_watchlist,
     load_watchlist_prices,
+    remove_from_watchlist,
 )
 
 

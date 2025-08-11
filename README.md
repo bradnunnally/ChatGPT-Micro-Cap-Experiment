@@ -121,6 +121,20 @@ ChatGPT-Micro-Cap-Experiment/
 
 ## 🧪 Development & Testing
 
+### Quick dev setup
+
+```bash
+make install   # create .venv and install deps + dev tools
+make lint      # ruff + black check + mypy (scoped)
+make test      # run pytest
+make run       # streamlit run app.py
+```
+
+Notes:
+- Python 3.13 is expected; a local .venv is used by Makefile targets.
+- Ruff is configured to sort imports and ignore style in tests; run `ruff --fix` to auto-apply safe fixes.
+- Mypy is run on `services/core/*` for a clean, incremental type baseline; expand scope later as desired.
+
 ### Running Tests:
 ```bash
 # Run full test suite

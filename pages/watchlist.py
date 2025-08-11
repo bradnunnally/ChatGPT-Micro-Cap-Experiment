@@ -1,8 +1,18 @@
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
+
+from components.nav import navbar
+from services.market import fetch_price
+from services.watchlist_service import (
+    add_to_watchlist,
+    get_watchlist,
+    load_watchlist_prices,
+    remove_from_watchlist,
+)
+from ui.forms import show_buy_form
 
 st.set_page_config(
     page_title="Watchlist",
@@ -20,17 +30,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-from components.nav import navbar
-from services.watchlist_service import (
-    get_watchlist,
-    add_to_watchlist,
-    remove_from_watchlist,
-    load_watchlist_prices,
-)
-from services.market import fetch_price
-from ui.forms import show_buy_form
-
 
 def watchlist_page():
     navbar(Path(__file__).name)

@@ -1,4 +1,5 @@
 import streamlit as st
+
 from data.portfolio import save_portfolio_snapshot
 
 
@@ -26,4 +27,4 @@ def show_cash_section() -> None:
             if submitted:
                 st.session_state.cash += st.session_state.ac_amount
                 st.session_state.show_cash_form = False
-                save_portfolio_snapshot()
+                save_portfolio_snapshot(st.session_state.portfolio, st.session_state.cash)

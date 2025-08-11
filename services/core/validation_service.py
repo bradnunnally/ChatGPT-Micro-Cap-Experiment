@@ -1,4 +1,5 @@
-from typing import List, Tuple, Optional
+from typing import Optional, Tuple
+
 
 class ValidationService:
     @staticmethod

@@ -1,8 +1,4 @@
 import pandas as pd
-import streamlit as st
-
-from config import TODAY
-from services.market import fetch_price
 
 
 def build_daily_summary(portfolio_data: pd.DataFrame) -> str:

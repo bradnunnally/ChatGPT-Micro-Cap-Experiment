@@ -1,7 +1,9 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple
-from services.core.portfolio_service import PortfolioService, Position
+from typing import Optional
+
 from services.core.market_service import MarketService
+from services.core.portfolio_service import PortfolioService, Position
+
 
 @dataclass
 class TradeResult:

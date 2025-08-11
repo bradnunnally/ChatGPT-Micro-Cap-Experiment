@@ -1,9 +1,12 @@
-import numpy as np
-import pandas as pd
 import sqlite3
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+from app_settings import settings
 from components.nav import navbar
 
 st.set_page_config(page_title="Performance", layout="wide", initial_sidebar_state="collapsed")
@@ -154,8 +157,7 @@ def highlight_stop(row: pd.Series) -> list[str]:
     return styles
 
 def main() -> None:
-    db_path = Path(__file__).resolve().parent.parent / "data" / "trading.db"
-    history = load_portfolio_history(str(db_path))
+    history = load_portfolio_history(str(settings.paths.db_file))
 
     # Handle empty portfolio history
     if history.empty:

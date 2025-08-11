@@ -1,11 +1,10 @@
 import streamlit as st
-import pandas as pd
 
-from config import COL_TICKER, COL_SHARES, COL_PRICE
+from config import COL_PRICE, COL_SHARES, COL_TICKER
 from services.market import fetch_price
 from services.trading import manual_buy, manual_sell
-from services.core.trading_service import TradingService
-from services.core.validation_service import ValidationService
+
+# Note: Core services are imported where used to reduce import-time side effects.
 
 
 def validate_buy_form(data: dict) -> bool:

@@ -1,6 +1,9 @@
 from typing import Optional
+
 import yfinance as yf
+
 from services.logging import logger
+
 
 class MarketService:
     def get_current_price(self, ticker: str) -> Optional[float]:

@@ -1,4 +1,23 @@
-.PHONY: audit
+.PHONY: install lint test run audit
+
+install:
+	python3 -m venv .venv || true
+	. .venv/bin/activate && python -m pip install -U pip
+	. .venv/bin/activate && pip install -r requirements.txt
+	. .venv/bin/activate && pip install black ruff mypy pre-commit pydantic pydantic-settings
+	@echo "Dev environment ready. Activate with: source .venv/bin/activate"
+
+lint:
+	. .venv/bin/activate && ruff check .
+	. .venv/bin/activate && black --check .
+	. .venv/bin/activate && mypy . || true
+
+test:
+	. .venv/bin/activate && pytest -q
+
+run:
+	. .venv/bin/activate && python -m streamlit run app.py
+
 audit:
 	python3 -m venv .venv || true
 	. .venv/bin/activate && python -m pip install -U pip

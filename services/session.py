@@ -1,6 +1,6 @@
 import streamlit as st
 
-from config import WATCHLIST_FILE
+from app_settings import settings
 from data.portfolio import load_portfolio
 from data.watchlist import load_watchlist
 
@@ -34,5 +34,5 @@ def init_session_state() -> None:
         st.session_state.cash = cash_amount
         st.session_state.needs_cash = needs_cash
 
-    if not st.session_state.watchlist and WATCHLIST_FILE.exists():
+    if not st.session_state.watchlist and settings.paths.watchlist_file.exists():
         st.session_state.watchlist = load_watchlist()

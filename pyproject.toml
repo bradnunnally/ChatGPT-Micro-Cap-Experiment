@@ -1,0 +1,23 @@
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+exclude = ["archive", "MagicMock"]
+
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["F401", "F841", "I001"]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+no_implicit_optional = true
+check_untyped_defs = true
+files = [
+	"services/core",
+]
+follow_imports = "skip"

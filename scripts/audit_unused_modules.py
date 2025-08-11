@@ -1,9 +1,10 @@
 from __future__ import annotations
+
 import argparse
 import ast
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Set, List, Tuple
+from typing import Dict, List, Set, Tuple
 
 IGNORE_DIRS = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".vscode", "build", "dist"}
 

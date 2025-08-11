@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Simple script to clear the trading database and reset to default state."""
 
-import sqlite3
 import os
+import sqlite3
+from pathlib import Path
+
+from config.settings import settings
+
 
 def clear_database():
-    db_path = 'data/trading.db'
+    db_path = str(settings.paths.db_file)
     
     if not os.path.exists(db_path):
         print("❌ Database file not found.")
@@ -14,7 +18,8 @@ def clear_database():
     print(f"🗑️  Clearing database: {db_path}")
     
     try:
-        # Connect to database
+        # Ensure directory and connect
+        Path(settings.paths.data_dir).mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
