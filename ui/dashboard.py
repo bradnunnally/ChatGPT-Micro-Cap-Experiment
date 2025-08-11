@@ -200,8 +200,8 @@ def render_dashboard() -> None:
             try:  # pragma: no cover - optional dependency
                 from streamlit_autorefresh import st_autorefresh
 
-                # Refresh every 15 minutes (900,000 milliseconds)
-                st_autorefresh(interval=900_000, key="portfolio_refresh")
+                # Refresh every 30 minutes (1,800,000 milliseconds)
+                st_autorefresh(interval=1_800_000, key="portfolio_refresh")
             except ImportError:  # pragma: no cover - import-time failure
                 st.warning("Install streamlit-autorefresh for auto refresh support.")
 
