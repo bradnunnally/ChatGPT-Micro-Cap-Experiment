@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
-import yfinance as yf
+from config import is_dev_stage, get_provider
+
+# Provide a module-level 'yf' reference for tests that monkeypatch it. It will
+# be imported lazily if not already patched. Tests expect services.core.market_data_service.yf
+# to exist for monkeypatching network behavior.
+yf = None  # type: ignore
 
 from config.settings import settings
 from core.errors import (
@@ -170,6 +175,26 @@ class MarketDataService:
         # Retry with jittered exponential backoff
         attempt = 0
         last_exc: Exception | None = None
+        # Fast synthetic path in dev_stage (no network calls)
+        if is_dev_stage():
+            try:
+                provider = get_provider()
+                import pandas as pd
+                end = pd.Timestamp.utcnow().normalize()
+                start = end - pd.Timedelta(days=7)
+                hist = provider.get_history(symbol, start, end)
+                if not hist.empty and "Close" in hist.columns:
+                    price = float(hist["Close"].dropna().iloc[-1])
+                    self._cache[symbol] = (price, self._now())
+                    self._record_success(symbol, price)
+                    return price
+            except Exception:
+                return None
+
+        global yf
+        if yf is None:  # allow tests to monkeypatch before first use
+            import yfinance as _yf  # type: ignore
+            yf = _yf
         while attempt < self._max_retries:
             try:
                 data = yf.download(symbol, period="1d", progress=False, auto_adjust=True)

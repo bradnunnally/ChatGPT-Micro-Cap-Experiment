@@ -38,7 +38,7 @@ This repository now includes a **full-featured Streamlit web application** for p
 - **📊 Data Export** - Download portfolio snapshots and historical data
 - **🗄️ SQLite Database** - Persistent local data storage
 
-### Quick Start:
+### Quick Start (Synthetic Dev Mode):
 
 ```bash
 # Clone the repository
@@ -48,8 +48,16 @@ cd ChatGPT-Micro-Cap-Experiment
 # Install dependencies
 pip install -r requirements.txt
 
-# Launch the application
-streamlit run app.py
+# Launch the application (synthetic data, no network)
+cp .env.example .env   # contains APP_ENV=dev_stage
+python app.py --env dev_stage
+### Production (Real Data)
+
+```bash
+python app.py --env production
+```
+
+Strategy selection uses APP_ENV: dev_stage -> deterministic synthetic data, production -> yfinance with local parquet cache in data/cache.
 ```
 
 The app will open at `http://localhost:8501` with a clean interface ready for portfolio management.
@@ -76,7 +84,7 @@ The app will open at `http://localhost:8501` with a clean interface ready for po
 ```
 ChatGPT-Micro-Cap-Experiment/
 ├── app.py                      # Main Streamlit application entry point
-├── config.py                   # Configuration settings and constants
+├── config/                     # Configuration package (settings & providers)
 ├── portfolio.py                # Portfolio management logic
 ├── requirements.txt            # Python dependencies
 ├── pytest.ini                 # Pytest configuration

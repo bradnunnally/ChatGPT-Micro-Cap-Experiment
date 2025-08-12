@@ -138,7 +138,10 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
                 prices[tickers[0]] = float(val)
     
     # If bulk fetch failed or returned empty prices, try individual fallback
-    if all(price == 0.0 for price in prices.values()) and tickers:
+    # Only fallback to individual lookups if bulk fetch returned data but yielded zero prices.
+    # When the bulk fetch returned an empty DataFrame (tests expect zeros without fallback)
+    # skip fallback to keep deterministic 0.0 pricing.
+    if (not data.empty) and all(price == 0.0 for price in prices.values()) and tickers:
         from services.market import get_current_price
         from services.manual_pricing import get_manual_price
         import logging

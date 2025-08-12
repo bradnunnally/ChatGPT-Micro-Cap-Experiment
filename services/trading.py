@@ -30,6 +30,7 @@ from services.core.validation import (
 from services.exceptions.validation import ValidationError as _ValidationError
 from services.logging import audit_logger, get_logger, log_error
 from services.market import get_current_price, get_day_high_low  # noqa: F401 (patched by tests)
+from services.pure_utils import compute_cost, validate_buy_price
 
 logger = get_logger(__name__)
 
@@ -108,15 +109,17 @@ def manual_buy(
             return False if session_mode else (False, str(exc), portfolio_df, cash)
         
         # Only enforce range validation when we actually have market data
-        if has_market_data and not (day_low <= price <= day_high):
-            msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
-            log_error(msg)
-            audit_logger.trade(
-                "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
-            )
-            return False if session_mode else (False, msg, portfolio_df, cash)
+        if has_market_data:
+            validation = validate_buy_price(price, day_low, day_high)
+            if not validation.valid:
+                msg = validation.reason or "Invalid price"
+                log_error(msg)
+                audit_logger.trade(
+                    "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
+                )
+                return False if session_mode else (False, msg, portfolio_df, cash)
 
-    cost = price * shares
+    cost = compute_cost(shares, price)
     if cost > cash:
         reason = "Insufficient cash for this trade."
         log_error(reason)

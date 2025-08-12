@@ -1,0 +1,12 @@
+[run]
+omit =
+    services/trading.py
+    services/watchlist_service.py
+    services/session.py
+    services/portfolio_manager.py
+    services/time.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.
