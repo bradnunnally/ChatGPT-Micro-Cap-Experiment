@@ -144,6 +144,7 @@ def render_dashboard() -> None:
                 "total_value": "Total Value",
                 "pnl": "PnL",
                 "action": "Action",
+                "price_source": "Price Source",
                 "cash_balance": "Cash Balance",
                 "total_equity": "Total Equity",
             }
@@ -299,6 +300,9 @@ def render_dashboard() -> None:
                 "Value": st.column_config.NumberColumn("Value", help="Current market value"),
                 "Buy Price": st.column_config.NumberColumn(
                     "Buy Price", help="Average price paid per share"
+                ),
+                "Price Source": st.column_config.TextColumn(
+                    "Price Source", help="Source of current price (Live, Last Close, Manual)"
                 ),
             }
             st.dataframe(

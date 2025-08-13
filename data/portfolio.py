@@ -4,6 +4,7 @@ from config import COL_COST, COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY
 from config.providers import is_dev_stage
 from data.db import get_connection, init_db
 from portfolio import ensure_schema
+
 from services.core.portfolio_service import compute_snapshot as _compute_snapshot
 from services.market import fetch_prices
 
@@ -299,7 +300,7 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
         TODAY,
     )
 
-    # Rename columns to match the portfolio_history table schema
+    # Create a lower-case version for DB insertion and returning to UI
     df = df.rename(
         columns={
             "Date": "date",
@@ -311,13 +312,14 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
             "Total Value": "total_value",
             "PnL": "pnl",
             "Action": "action",
+            "Price Source": "price_source",
             "Cash Balance": "cash_balance",
             "Total Equity": "total_equity",
         }
     )
 
-    # Ensure column order aligns with the database schema
-    df = df[
+    # Prepare DB-aligned DataFrame (subset to schema columns only)
+    df_db = df[
         [
             "date",
             "ticker",
@@ -392,4 +394,5 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
                     ),
                 )
 
+    # Return the UI-friendly DataFrame (lowercase keys plus price_source)
     return df
