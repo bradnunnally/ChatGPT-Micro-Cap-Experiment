@@ -1,4 +1,6 @@
 import sqlite3
+import threading
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +9,9 @@ from app_settings import settings
 # Backward-compat: some tests patch data.db.DB_FILE; keep an alias.
 # Use a Path so either str or Path patches will work when coerced below.
 DB_FILE = settings.paths.db_file
+
+# Thread-local cached connection (reduces churn & ResourceWarnings in tests)
+_thread_local = threading.local()
 
 SCHEMA_STATEMENTS = [
     """
@@ -68,7 +73,7 @@ SCHEMA_STATEMENTS = [
 SCHEMA = "\n".join(stmt.strip() for stmt in SCHEMA_STATEMENTS)
 
 
-def get_connection() -> Any:
+def get_connection(reuse: bool = False) -> Any:
     """Return a SQLite3 connection or a proxy that supports context management when mocked.
 
     - Returns a real sqlite3.Connection in normal operation (supports `with`).
@@ -77,7 +82,21 @@ def get_connection() -> Any:
     """
     # Ensure the data directory exists
     Path(settings.paths.data_dir).mkdir(parents=True, exist_ok=True)
+    if reuse:
+        cached = getattr(_thread_local, "conn", None)
+        if cached is not None:
+            return cached
     raw = sqlite3.connect(str(DB_FILE))
+    # Ensure connection is closed even if caller forgets (guards ResourceWarning in tests)
+    def _safe_close(c):
+        try:
+            c.close()
+        except Exception:
+            pass
+    try:
+        weakref.finalize(raw, _safe_close, raw)
+    except Exception:  # pragma: no cover - weakref issues shouldn't break runtime
+        pass
     # Enable WAL and adjust sync for better concurrency and durability trade-offs
     try:
         raw.execute("PRAGMA journal_mode=WAL;")
@@ -89,6 +108,8 @@ def get_connection() -> Any:
     # If the returned object already supports context management (real connection or test-provided),
     # return it directly.
     if hasattr(raw, "__enter__") and hasattr(raw, "__exit__"):
+        if reuse:
+            _thread_local.conn = raw  # cache for subsequent calls in same thread
         return raw
 
     class _ConnProxy:
@@ -108,12 +129,15 @@ def get_connection() -> Any:
         def __getattr__(self, name):
             return getattr(self._u, name)
 
-    return _ConnProxy(raw)
+    proxy = _ConnProxy(raw)
+    if reuse:
+        _thread_local.conn = proxy
+    return proxy
 
 
 def init_db() -> None:
     """Initialise the database with required tables if they don't exist."""
-    with get_connection() as conn:
+    with get_connection(reuse=False) as conn:
         # Keep executescript for tests importing SCHEMA
         try:
             conn.executescript(SCHEMA)

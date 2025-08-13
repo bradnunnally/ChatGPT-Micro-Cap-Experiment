@@ -72,7 +72,7 @@ def _get_synthetic_close(ticker: str) -> float | None:
     try:
         provider = get_provider()
         end = pd.Timestamp.utcnow().normalize()
-        start = end - pd.Timedelta(days=7)
+        start = end - pd.Timedelta(days=90)
         hist = provider.get_history(ticker, start, end)
         if not hist.empty:
             for candidate in ("Close", "close"):
@@ -162,8 +162,8 @@ def fetch_prices(tickers: list[str]) -> pd.DataFrame:
         provider = get_provider()
         import pandas as _pd
         end = _pd.Timestamp.utcnow().normalize()
-        start = end - _pd.Timedelta(days=7)
-        rows = []
+        start = end - _pd.Timedelta(days=90)
+        rows: list[dict[str, Any]] = []
         for t in tickers:
             try:
                 hist = provider.get_history(t, start, end)
@@ -262,7 +262,7 @@ def get_day_high_low(ticker: str) -> tuple[float, float]:
             provider = get_provider()
             import pandas as pd
             end = pd.Timestamp.utcnow().normalize()
-            start = end - pd.Timedelta(days=7)
+            start = end - pd.Timedelta(days=90)
             hist = provider.get_history(ticker, start, end)
             if not hist.empty:
                 high_col = "High" if "High" in hist.columns else ("high" if "high" in hist.columns else None)
@@ -351,7 +351,7 @@ def get_current_price(ticker: str) -> float | None:
         try:
             provider = get_provider()
             end = pd.Timestamp.utcnow().normalize()
-            start = end - pd.Timedelta(days=7)
+            start = end - pd.Timedelta(days=90)
             hist = provider.get_history(ticker, start, end)
             if not hist.empty:
                 close_col = "Close" if "Close" in hist.columns else ("close" if "close" in hist.columns else None)

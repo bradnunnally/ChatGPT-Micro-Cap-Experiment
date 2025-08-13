@@ -13,7 +13,7 @@ from services.time import TradingCalendar, get_clock
 from ui.cash import show_cash_section
 from ui.forms import show_buy_form, show_sell_form
 from ui.manual_pricing import show_manual_pricing_section, show_api_status_warning
-from ui.summary import build_daily_summary
+from ui.summary import build_daily_summary, render_daily_portfolio_summary
 
 
 def fmt_currency(val: float) -> str:
@@ -264,10 +264,11 @@ def render_dashboard() -> None:
             styled = port_table.style.format(formatters).set_properties(
                 subset=numeric_display, **{"text-align": "right"}
             )
+            # Pandas Styler.applymap deprecated -> use .map (element-wise) for new versions
             if "Pct Change" in port_table:
-                styled = styled.applymap(highlight_pct, subset=["Pct Change"])
+                styled = styled.map(highlight_pct, subset=["Pct Change"])  # type: ignore[attr-defined]
             if "PnL" in port_table:
-                styled = styled.applymap(color_pnl, subset=["PnL"])
+                styled = styled.map(color_pnl, subset=["PnL"])  # type: ignore[attr-defined]
             styled = styled.apply(highlight_stop, axis=1).set_table_styles(
                 [
                     {
@@ -321,7 +322,35 @@ def render_dashboard() -> None:
         st.subheader("Daily Summary")
         if st.button("Generate Daily Summary", type="primary"):
             if not summary_df.empty:
-                st.session_state.daily_summary = build_daily_summary(summary_df)
+                # Build new structured data payload for enhanced summary renderer
+                holdings_payload = []
+                positions_only = summary_df[summary_df["Ticker"] != "TOTAL"].copy()
+                for _, row in positions_only.iterrows():
+                    holdings_payload.append(
+                        {
+                            "ticker": row.get("Ticker"),
+                            "exchange": row.get("Exchange", "N/A"),
+                            "sector": row.get("Sector", "N/A"),
+                            "shares": row.get("Shares"),
+                            "costPerShare": row.get("Cost Basis"),
+                            "currentPrice": row.get("Current Price"),
+                            # Map any existing stop fields; default None
+                            "stopType": "None",  # legacy data doesn't track stops yet
+                            "stopPrice": None,
+                            "trailingStopPct": None,
+                            "marketCap": row.get("Market Cap"),
+                            "adv20d": row.get("ADV20"),
+                            "spread": row.get("Spread"),
+                            "catalystDate": row.get("Catalyst"),
+                        }
+                    )
+                payload = {
+                    "asOfDate": datetime.now().strftime("%Y-%m-%d"),
+                    "cashBalance": float(summary_df.get("Cash Balance").dropna().iloc[-1]) if "Cash Balance" in summary_df else 0.0,
+                    "holdings": holdings_payload,
+                    "notes": {"materialNewsToday": "N/A", "catalystNotes": []},
+                }
+                st.session_state.daily_summary = render_daily_portfolio_summary(payload)
             else:
                 st.info("No summary available.")
         if st.session_state.get("daily_summary"):

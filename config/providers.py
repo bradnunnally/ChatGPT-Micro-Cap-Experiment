@@ -13,7 +13,8 @@ from data_providers import DataProvider  # type: ignore
 from .settings import settings
 
 VALID_ENVS = {"dev_stage", "production"}
-DEFAULT_ENV = "production"
+# On dev_stage branch we default to synthetic data to avoid yfinance rate limits.
+DEFAULT_ENV = "dev_stage"  # NOTE: revert to "production" before merging to main
 
 
 @dataclass(slots=True)

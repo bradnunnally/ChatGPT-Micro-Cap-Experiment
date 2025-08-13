@@ -181,7 +181,7 @@ class MarketDataService:
                 provider = get_provider()
                 import pandas as pd
                 end = pd.Timestamp.utcnow().normalize()
-                start = end - pd.Timedelta(days=7)
+                start = end - pd.Timedelta(days=90)
                 hist = provider.get_history(symbol, start, end)
                 if not hist.empty and "Close" in hist.columns:
                     price = float(hist["Close"].dropna().iloc[-1])

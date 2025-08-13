@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, UTC
 
 from data.db import get_connection, init_db
 
@@ -17,7 +17,7 @@ class NoopAgent:
                 VALUES (?, ?, ?, ?)
                 """,
                 (
-                    datetime.utcnow().isoformat(),
+                    datetime.now(UTC).isoformat(),
                     self.name,
                     "heartbeat",
                     json.dumps({"msg": "noop heartbeat"}),

@@ -48,16 +48,20 @@ cd ChatGPT-Micro-Cap-Experiment
 # Install dependencies
 pip install -r requirements.txt
 
-# Launch the application (synthetic data, no network)
-cp .env.example .env   # contains APP_ENV=dev_stage
-python app.py --env dev_stage
+## Launch the application (synthetic data, no network)
+cp .env.example .env   # ensure APP_ENV=dev_stage
+streamlit run app.py  # or: APP_ENV=dev_stage streamlit run app.py
+```
+
+By default in dev_stage the app now synthesizes ~90 calendar days (business-day sampled) of deterministic OHLCV data for any ticker you reference (seeded for reproducibility). Two extra illustrative tickers (e.g. NVDA, TSLA) are supported out of the box just like AAPL/MSFT—simply add them to your watchlist or trade them; synthetic history is generated on demand.
+
 ### Production (Real Data)
 
 ```bash
 python app.py --env production
 ```
 
-Strategy selection uses APP_ENV: dev_stage -> deterministic synthetic data, production -> yfinance with local parquet cache in data/cache.
+Strategy selection uses APP_ENV: dev_stage -> deterministic synthetic data (90d history window), production -> yfinance with local parquet cache in data/cache.
 ```
 
 The app will open at `http://localhost:8501` with a clean interface ready for portfolio management.
@@ -67,7 +71,7 @@ The app will open at `http://localhost:8501` with a clean interface ready for po
 - **Backend**: Python services for trading, market data, and portfolio management  
 - **Database**: SQLite for reliable local data persistence
 - **Market Data**: Yahoo Finance integration for real-time stock prices
-- **Testing**: Comprehensive test suite with 82% coverage
+- **Testing**: Comprehensive test suite with ~89% coverage (target ≥80%)
 
 ## 🛠️ Technical Stack
 
@@ -113,7 +117,7 @@ ChatGPT-Micro-Cap-Experiment/
 │   ├── forms.py                # Trading forms
 │   ├── summary.py              # Portfolio summary views
 │   └── user_guide.py           # User guide content
-├── tests/                      # Test suite (82% coverage)
+├── tests/                      # Test suite (~89% coverage)
 │   ├── conftest.py             # Pytest configuration
 │   ├── test_*.py               # Individual test files
 │   └── mock_streamlit.py       # Streamlit mocking utilities
@@ -163,7 +167,7 @@ pytest tests/test_portfolio_manager.py
 ```
 
 ### Code Quality:
-- **82% Test Coverage** - Comprehensive testing across all major modules
+- **~89% Test Coverage** - Comprehensive testing across all major modules
 - **Type Hints** - Full type annotation for better code reliability
 - **Modular Architecture** - Clean separation of concerns
 - **Error Handling** - Robust error handling and user feedback
