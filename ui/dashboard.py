@@ -268,6 +268,23 @@ def render_dashboard() -> None:
                 columns={"Cost Basis": "Buy Price", "Total Value": "Value"},
                 inplace=True,
             )
+            # Cache micro provider capabilities once per session to avoid repeated API calls
+            if st.session_state.get("use_micro_providers") and "micro_capabilities" not in st.session_state:
+                try:
+                    from micro_config import get_provider as _gp
+                    prov = _gp()
+                    caps = getattr(prov, "get_capabilities", lambda: {})()
+                    st.session_state.micro_capabilities = caps
+                except Exception:
+                    st.session_state.micro_capabilities = {}
+
+            # Hide unsupported columns based on capabilities (ADV20 relies on candles; Spread on bidask)
+            caps = st.session_state.get("micro_capabilities") if st.session_state.get("use_micro_providers") else None
+            if caps:
+                if not caps.get("candles", True) and "ADV20" in port_table.columns:
+                    port_table.drop(columns=["ADV20"], inplace=True)
+                if not caps.get("bidask", True) and "Spread" in port_table.columns:
+                    port_table.drop(columns=["Spread"], inplace=True)
 
             for col in [
                 "Shares",

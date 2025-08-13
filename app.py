@@ -9,7 +9,7 @@ from infra.logging import get_correlation_id, set_correlation_id
 from ui.dashboard import render_dashboard
 
 st.set_page_config(
-    page_title="AI Assisted Trading (DEV)",
+    page_title="AI Assisted Trading",
     layout="wide",
     initial_sidebar_state="collapsed",
 )

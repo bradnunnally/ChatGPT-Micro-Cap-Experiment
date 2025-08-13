@@ -72,3 +72,44 @@ def show_user_guide() -> None:
             - **Testing**: Run `pytest` in the project directory to execute the test suite
             """
         )
+
+        st.subheader("📊 Data Coverage & Provider Capabilities")
+        st.markdown(
+            """
+            The application supports two data provider modes:
+
+            | Provider Mode | Source | Typical Use | Notes |
+            | ------------- | ------ | ----------- | ----- |
+            | Legacy | Yahoo Finance (yfinance) | Default historical + quotes | Broad coverage, no bid/ask microstructure |
+            | Micro (Production) | Finnhub | Quotes, profiles, news, earnings | Access depends on API key plan |
+            | Micro (Dev) | Synthetic Generator | Deterministic offline data | No live market dependency |
+
+            **Current Finnhub capability detection** (runtime checks at startup):
+            - Quotes: ✔ (used for Current Price, PnL, % Change)
+            - Company Profile (exchange, sector, market cap): ✔
+            - Company News: ✔ (used for catalyst hints)
+            - Earnings Calendar: ✔ (next earnings date)
+            - Daily Candles (OHLCV): ✖ *Not available on this plan* (ADV20 & historical volatility omitted)
+            - Bid/Ask (spread): ✖ *Not available on this plan* (Spread column omitted)
+
+            When a capability is unavailable:
+            - Related columns (e.g., ADV20, Spread) are hidden or marked *N/A*.
+            - Daily Summary liquidity metrics are skipped with a note.
+            - No repeated API retries after a permission (403) response (reduces noise & quota use).
+
+            **Future Expansion Points**
+            - Liquidity Metrics: If candle access is granted, 20-day average volume (ADV20) and rolling volatility will auto-populate.
+            - Microstructure: If bid/ask becomes available, spread and implied slippage metrics can be displayed.
+            - Additional Catalysts: Corporate actions / insider transactions if exposed by provider.
+
+            **Synthetic Mode (dev_stage)**
+            - Generates deterministic OHLCV paths for rapid UI development & testing.
+            - Provides pseudo profile, news, and earnings placeholders.
+            - Ensures zero external network usage for offline hacking.
+
+            To switch provider modes:
+            1. Set `ENABLE_MICRO_PROVIDERS=1` in `.env`.
+            2. Set `APP_ENV=production` and add `FINNHUB_API_KEY=...` for live Finnhub.
+            3. Use `APP_ENV=dev_stage` with the flag for synthetic data.
+            """
+        )

@@ -206,6 +206,7 @@ class FinnhubDataProvider:
 
     # Internal cached finnhub client (lazily created). Declared as field because of slots.
     _client: Any | None = field(init=False, default=None, repr=False)
+    _capabilities: Dict[str, bool] | None = field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.cache_dir = Path(self.cache_dir)
@@ -230,6 +231,10 @@ class FinnhubDataProvider:
                 last_err = e
                 # crude 429 detection across SDK/requests variations
                 is_429 = "429" in msg or "Too Many Requests" in msg
+                is_403 = "403" in msg or "access" in msg.lower()
+                # Do not retry permission errors (403)
+                if is_403:
+                    break
                 if not is_429 and i == attempts - 1:
                     break
                 # backoff with jitter
@@ -410,6 +415,51 @@ class FinnhubDataProvider:
         items = (cal or {}).get("earningsCalendar") or []
         _write_json(path, items)
         return items
+
+    # ------------------------------ capabilities --------------------------------
+    def get_capabilities(self, probe_symbol: str = "AAPL") -> Dict[str, bool]:
+        """Detect which endpoints appear accessible for this API key.
+
+        Results are cached for the instance lifetime to avoid repeated calls.
+        """
+        if self._capabilities is not None:
+            return self._capabilities
+        caps = {k: False for k in ["quote", "profile", "candles", "bidask", "news", "earnings"]}
+        try:
+            q = self.get_quote(probe_symbol)
+            caps["quote"] = bool(q and q.get("price") is not None)
+        except Exception:
+            pass
+        try:
+            p = self.get_company_profile(probe_symbol)
+            caps["profile"] = bool(p and p.get("exchange"))
+        except Exception:
+            pass
+        try:
+            today = date.today()
+            candles = self.get_daily_candles(probe_symbol, today - timedelta(days=5), today)
+            caps["candles"] = not candles.empty
+        except Exception:
+            pass
+        try:
+            ba = self.get_bid_ask(probe_symbol)
+            caps["bidask"] = any(ba)
+        except Exception:
+            pass
+        try:
+            today = date.today()
+            news = self.get_company_news(probe_symbol, today - timedelta(days=3), today)
+            caps["news"] = isinstance(news, list) and len(news) > 0
+        except Exception:
+            pass
+        try:
+            today = date.today()
+            earn = self.get_earnings_calendar(probe_symbol, today - timedelta(days=30), today + timedelta(days=60))
+            caps["earnings"] = isinstance(earn, list)
+        except Exception:
+            pass
+        self._capabilities = caps
+        return caps
 
 
 __all__ = [
