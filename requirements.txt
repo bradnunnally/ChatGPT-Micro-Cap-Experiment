@@ -16,3 +16,6 @@ pytest>=8.0
 typer>=0.12.3  # pulls in click transitively; no direct click imports
 
 python-dotenv>=1.0.1
+
+# Finnhub SDK
+finnhub-python>=2.4.20

@@ -61,7 +61,36 @@ By default in dev_stage the app now synthesizes ~90 calendar days (business-day 
 python app.py --env production
 ```
 
-Strategy selection uses APP_ENV: dev_stage -> deterministic synthetic data (90d history window), production -> yfinance with local parquet cache in data/cache.
+Strategy selection uses APP_ENV: dev_stage -> deterministic synthetic data (90d history window), production -> Finnhub with a small JSON cache in data/cache for the included micro CLI app.
+
+### Minimal CLI App (Finnhub integration)
+
+This repo now includes a tiny standalone CLI (`micro_app.py`) that demonstrates using Finnhub in production and a synthetic provider in dev.
+
+Setup:
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env  # set APP_ENV and FINNHUB_API_KEY for production
+```
+
+Usage examples:
+
+```bash
+# Dev mode (no network): seeds AAA/BBB demo portfolio on first run
+APP_ENV=dev_stage python micro_app.py show
+
+# Production (requires FINNHUB_API_KEY in env or .env)
+APP_ENV=production FINNHUB_API_KEY=... python micro_app.py add AAPL 1 200 --stop 180
+APP_ENV=production python micro_app.py show
+APP_ENV=production python micro_app.py remove AAPL
+```
+
+Caching (production):
+- quotes: quote_{ticker}.json (30s TTL)
+- candles: candles_{ticker}_{start}_{end}.json (1h TTL)
+- profile: profile_{ticker}.json (1d TTL)
+- news/earnings/bid-ask: 1d TTL
 ```
 
 The app will open at `http://localhost:8501` with a clean interface ready for portfolio management.

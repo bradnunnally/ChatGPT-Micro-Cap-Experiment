@@ -50,6 +50,11 @@ Documents/
 
 # === Environment Variables ===
 *.env
+.env
+
+# App caches and local data
+data/cache/
+data/portfolio.json
 
 # === Project Generated Files ===
 *.db

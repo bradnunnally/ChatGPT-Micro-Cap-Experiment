@@ -1,17 +1,72 @@
 import os
 import time
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List, Optional
 from functools import lru_cache
 import pandas as pd
 import streamlit as st
 import requests
 
 from config import get_provider, resolve_environment, is_dev_stage
+try:  # optional micro provider imports
+    from micro_config import get_provider as get_micro_provider, resolve_env as resolve_micro_env
+    from micro_data_providers import MarketDataProvider as MicroMarketDataProvider
+except Exception:  # pragma: no cover - micro modules absent
+    get_micro_provider = None  # type: ignore
+    resolve_micro_env = None  # type: ignore
+    MicroMarketDataProvider = None  # type: ignore
 
 from core.errors import MarketDataDownloadError, NoMarketDataError
 from services.logging import get_logger, log_error
 
 logger = get_logger(__name__)
+
+# -------------------- Feature flag for micro provider path --------------------
+def _micro_enabled() -> bool:
+    return os.getenv("ENABLE_MICRO_PROVIDERS") == "1" or os.getenv("APP_USE_FINNHUB") == "1"
+
+_micro_provider_cache: Optional[MicroMarketDataProvider] = None  # type: ignore
+
+def _get_micro_provider() -> Optional[MicroMarketDataProvider]:  # type: ignore
+    global _micro_provider_cache
+    if not _micro_enabled():
+        return None
+    if get_micro_provider is None:
+        return None
+    if _micro_provider_cache is None:
+        try:
+            _micro_provider_cache = get_micro_provider()
+        except Exception as e:  # pragma: no cover
+            logger.error("micro_provider_init_failed", extra={"error": str(e)})
+            return None
+    return _micro_provider_cache
+
+def fetch_price_v2(ticker: str) -> Optional[float]:
+    """New provider-based price fetch (Finnhub or Synthetic) when enabled.
+
+    Falls back to legacy fetch_price if disabled or on error.
+    """
+    prov = _get_micro_provider()
+    if not prov:
+        return fetch_price(ticker)
+    try:
+        q = prov.get_quote(ticker)
+        return q.get("price") if q else None
+    except Exception as e:  # pragma: no cover - defensive
+        logger.error("micro_price_failed", extra={"ticker": ticker, "error": str(e)})
+        return fetch_price(ticker)
+
+def fetch_prices_v2(tickers: List[str]) -> pd.DataFrame:
+    prov = _get_micro_provider()
+    if not prov:
+        return fetch_prices(tickers)
+    rows = []
+    for t in tickers:
+        try:
+            q = prov.get_quote(t) or {}
+            rows.append({"ticker": t, "current_price": q.get("price"), "pct_change": q.get("percent")})
+        except Exception:  # pragma: no cover
+            rows.append({"ticker": t, "current_price": None, "pct_change": None})
+    return pd.DataFrame(rows)
 
 # Global rate limiting state (retained from original implementation)
 _last_request_time = 0.0

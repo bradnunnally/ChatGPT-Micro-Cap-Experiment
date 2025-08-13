@@ -1,4 +1,5 @@
 from datetime import datetime
+import os
 
 import pandas as pd
 import streamlit as st
@@ -91,6 +92,11 @@ def initialize_services():
         st.session_state.portfolio_service = PortfolioService()
     if "market_service" not in st.session_state:
         st.session_state.market_service = MarketService()
+        # cache flag for micro provider use
+        if "use_micro_providers" not in st.session_state:
+            st.session_state.use_micro_providers = bool(
+                os.getenv("ENABLE_MICRO_PROVIDERS") == "1" or os.getenv("APP_USE_FINNHUB") == "1"
+            )
 
 
 def render_dashboard() -> None:
@@ -189,6 +195,30 @@ def render_dashboard() -> None:
                     "today" if next_day == now_ts.date() else next_open_dt.strftime("%a %b %d")
                 )
                 st.warning(f"Closed — opens {_fmt(next_open_dt)} ET {day_label}")
+                # Provider mode toggle (dev only)
+                if os.getenv("APP_ENV", "production") != "production":
+                    st.caption("Provider Mode")
+                    toggled = st.toggle(
+                        "Use micro providers (Finnhub/Synthetic)",
+                        value=st.session_state.use_micro_providers,
+                        help="When enabled and FINNHUB_API_KEY set (production), uses Finnhub; in dev uses synthetic.",
+                    )
+                    st.session_state.use_micro_providers = toggled
+                    # Show current provider name
+                    if toggled:
+                        try:
+                            from micro_config import get_provider as _gp
+                            prov = _gp()
+                            st.caption(f"Active: {prov.__class__.__name__}")
+                        except Exception:
+                            st.caption("Active: (failed to init micro provider)")
+                    else:
+                        st.caption("Active: Legacy yfinance path")
+                else:
+                    if st.session_state.use_micro_providers:
+                        st.caption("Provider: Micro (Finnhub)")
+                    else:
+                        st.caption("Provider: Legacy (yfinance)")
 
         port_table = summary_df[summary_df["Ticker"] != "TOTAL"].copy()
         header_cols = st.columns([4, 1, 1])
