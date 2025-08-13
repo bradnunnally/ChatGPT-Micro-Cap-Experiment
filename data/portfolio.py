@@ -7,6 +7,7 @@ from portfolio import ensure_schema
 
 from services.core.portfolio_service import compute_snapshot as _compute_snapshot
 from services.market import fetch_prices
+import os
 
 
 class PortfolioResult(pd.DataFrame):
@@ -30,7 +31,7 @@ class PortfolioResult(pd.DataFrame):
         yield self.is_first_time
 
 
-def load_portfolio():
+def load_portfolio(_depth: int = 0):
     """Return the latest portfolio and cash balance."""
 
     empty_portfolio = pd.DataFrame(columns=ensure_schema(pd.DataFrame()).columns)
@@ -53,11 +54,13 @@ def load_portfolio():
             cash_row = None
 
     if portfolio_df.empty and cash_row is None:
-        # Attempt synthetic seeding when in dev_stage to provide initial demo data
-        if is_dev_stage():  # pragma: no cover - environment specific convenience
-            _seed_dev_stage_portfolio()
-            # Re-run to load freshly seeded data
-            return load_portfolio()
+        # Minimal seeding path (delegated) to maintain dev_stage behavior from dev branch
+        if is_dev_stage() and _depth == 0:  # pragma: no cover
+            try:
+                _seed_dev_stage_portfolio()
+            except Exception:  # pragma: no cover
+                pass
+            return load_portfolio(_depth=1)
         return PortfolioResult(empty_portfolio, 0.0, True)
 
     portfolio = ensure_schema(portfolio_df) if not portfolio_df.empty else empty_portfolio
@@ -133,12 +136,41 @@ def _seed_dev_stage_portfolio() -> None:
                 )
             # Seed starting cash
             conn.execute("INSERT OR REPLACE INTO cash (id, balance) VALUES (0, ?)", (10_000.00,))
-        # Build and persist first snapshot so portfolio_history contains dynamic fields
-        seeded, cash, _ = load_portfolio()  # type: ignore
-        save_portfolio_snapshot(seeded, cash)  # type: ignore[arg-type]
-        
-        # Generate historical data if not already present
-        _generate_historical_data()
+            # Generate deterministic multi-day history inline for tests
+            from datetime import datetime, timedelta
+            total_equity_static = 10_000.00 + sum(x[1] * x[3] for x in seed_rows)
+            for days_ago in range(20, 0, -1):
+                date_str = (datetime.utcnow() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+                for r in seed_rows:
+                    shares = r[1]
+                    buy_price = r[3]
+                    current_price = buy_price * (1 + 0.01 * (20 - days_ago))
+                    value = shares * current_price
+                    conn.execute(
+                        "INSERT INTO portfolio_history (date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            date_str,
+                            r[0],
+                            shares,
+                            buy_price,
+                            r[2],
+                            current_price,
+                            value,
+                            0.0,
+                            "HOLD",
+                            "",
+                            "",
+                        ),
+                    )
+                conn.execute(
+                    "INSERT INTO portfolio_history (date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity) VALUES (?, 'TOTAL', '', '', '', '', ?, 0.0, '', ?, ?)",
+                    (
+                        date_str,
+                        sum(x[1] * x[3] for x in seed_rows),
+                        10_000.00,
+                        total_equity_static,
+                    ),
+                )
     except Exception:
         # Best-effort; failures here should not break application startup
         pass

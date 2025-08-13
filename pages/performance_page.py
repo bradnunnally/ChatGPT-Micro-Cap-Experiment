@@ -28,9 +28,11 @@ def load_portfolio_history(db_path: str) -> pd.DataFrame:
     df = pd.read_sql_query(query, conn, parse_dates=["date"])
     conn.close()
 
-    # Replace empty strings and convert to float
-    df["total_equity"] = pd.to_numeric(df["total_equity"].replace("", np.nan), errors="coerce").infer_objects(copy=False)
-    df["total_value"] = pd.to_numeric(df["total_value"].replace("", np.nan), errors="coerce").infer_objects(copy=False)
+    # Replace empty strings safely and convert to float without deprecated downcasting
+    te = df["total_equity"]
+    tv = df["total_value"]
+    df["total_equity"] = pd.to_numeric(te.mask(te == "", np.nan), errors="coerce")
+    df["total_value"] = pd.to_numeric(tv.mask(tv == "", np.nan), errors="coerce")
 
     # Drop rows where both values are NaN
     df = df.dropna(subset=["total_equity", "total_value"], how="all")

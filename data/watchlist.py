@@ -24,10 +24,13 @@ def load_watchlist() -> list[str]:
         wf = WATCHLIST_FILE
         # Path-like: honor core tests that patch builtins.open/json.load
         if isinstance(wf, Path):
-            if not wf.exists():
+            # Always attempt to open so patched builtins.open/json.load in tests are exercised,
+            # falling back gracefully if the file truly does not exist.
+            try:
+                with open(wf, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except FileNotFoundError:
                 return []
-            with open(wf, "r", encoding="utf-8") as f:
-                data = json.load(f)
         else:
             # MagicMock-style object in unit tests
             if hasattr(wf, "exists") and callable(getattr(wf, "exists")):
