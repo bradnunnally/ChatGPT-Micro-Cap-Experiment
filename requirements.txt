@@ -5,4 +5,14 @@ streamlit==1.36.0
 plotly==5.24.1
 streamlit-autorefresh>=0.0.2
 
+# config
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
 pytest>=8.0
+
+# CLI
+typer>=0.12.3
+click>=8.1
+
+python-dotenv>=1.0.1

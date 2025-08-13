@@ -1,0 +1,40 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["archive", "MagicMock", "legacy_config.py"]
+
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["F401", "F841", "I001"]
+
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+ignore_missing_imports = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+no_implicit_optional = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+warn_return_any = true
+show_error_codes = true
+exclude = [
+	"legacy_config.py",
+	"venv/",
+	"archive/",
+	"MagicMock/",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py313']
+skip-string-normalization = false

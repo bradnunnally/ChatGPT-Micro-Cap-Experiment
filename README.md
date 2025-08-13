@@ -38,7 +38,7 @@ This repository now includes a **full-featured Streamlit web application** for p
 - **📊 Data Export** - Download portfolio snapshots and historical data
 - **🗄️ SQLite Database** - Persistent local data storage
 
-### Quick Start:
+### Quick Start (Synthetic Dev Mode):
 
 ```bash
 # Clone the repository
@@ -48,8 +48,20 @@ cd ChatGPT-Micro-Cap-Experiment
 # Install dependencies
 pip install -r requirements.txt
 
-# Launch the application
-streamlit run app.py
+## Launch the application (synthetic data, no network)
+cp .env.example .env   # ensure APP_ENV=dev_stage
+streamlit run app.py  # or: APP_ENV=dev_stage streamlit run app.py
+```
+
+By default in dev_stage the app now synthesizes ~90 calendar days (business-day sampled) of deterministic OHLCV data for any ticker you reference (seeded for reproducibility). Two extra illustrative tickers (e.g. NVDA, TSLA) are supported out of the box just like AAPL/MSFT—simply add them to your watchlist or trade them; synthetic history is generated on demand.
+
+### Production (Real Data)
+
+```bash
+python app.py --env production
+```
+
+Strategy selection uses APP_ENV: dev_stage -> deterministic synthetic data (90d history window), production -> yfinance with local parquet cache in data/cache.
 ```
 
 The app will open at `http://localhost:8501` with a clean interface ready for portfolio management.
@@ -59,7 +71,7 @@ The app will open at `http://localhost:8501` with a clean interface ready for po
 - **Backend**: Python services for trading, market data, and portfolio management  
 - **Database**: SQLite for reliable local data persistence
 - **Market Data**: Yahoo Finance integration for real-time stock prices
-- **Testing**: Comprehensive test suite with 82% coverage
+- **Testing**: Comprehensive test suite with ~89% coverage (target ≥80%)
 
 ## 🛠️ Technical Stack
 
@@ -76,7 +88,7 @@ The app will open at `http://localhost:8501` with a clean interface ready for po
 ```
 ChatGPT-Micro-Cap-Experiment/
 ├── app.py                      # Main Streamlit application entry point
-├── config.py                   # Configuration settings and constants
+├── config/                     # Configuration package (settings & providers)
 ├── portfolio.py                # Portfolio management logic
 ├── requirements.txt            # Python dependencies
 ├── pytest.ini                 # Pytest configuration
@@ -105,7 +117,7 @@ ChatGPT-Micro-Cap-Experiment/
 │   ├── forms.py                # Trading forms
 │   ├── summary.py              # Portfolio summary views
 │   └── user_guide.py           # User guide content
-├── tests/                      # Test suite (82% coverage)
+├── tests/                      # Test suite (~89% coverage)
 │   ├── conftest.py             # Pytest configuration
 │   ├── test_*.py               # Individual test files
 │   └── mock_streamlit.py       # Streamlit mocking utilities
@@ -120,6 +132,24 @@ ChatGPT-Micro-Cap-Experiment/
 ```
 
 ## 🧪 Development & Testing
+
+### Quick dev setup
+
+```bash
+make install   # create .venv and install deps + dev tools
+make lint      # ruff + black check + mypy (scoped)
+make test      # run pytest
+make run       # streamlit run app.py
+```
+
+Notes:
+- Python 3.13 is expected; a local .venv is used by Makefile targets.
+- Ruff is configured to sort imports and ignore style in tests; run `ruff --fix` to auto-apply safe fixes.
+- Mypy is run on `services/core/*` for a clean, incremental type baseline; expand scope later as desired.
+
+CI: A GitHub Actions workflow runs lint, type-checks, and tests on PRs to `dev_stage` and `main`.
+
+Core validation and models: shared validators live in `services/core/validation.py` and are consumed by immutable dataclasses in `services/core/models.py`. Trading helpers delegate to these validators while keeping legacy boolean return semantics.
 
 ### Running Tests:
 ```bash
@@ -137,12 +167,46 @@ pytest tests/test_portfolio_manager.py
 ```
 
 ### Code Quality:
-- **82% Test Coverage** - Comprehensive testing across all major modules
+- **~89% Test Coverage** - Comprehensive testing across all major modules
 - **Type Hints** - Full type annotation for better code reliability
 - **Modular Architecture** - Clean separation of concerns
 - **Error Handling** - Robust error handling and user feedback
 
-## 🔧 Configuration
+## � Logging & Errors
+
+This project emits structured JSON logs to stdout for easy ingestion and analysis.
+
+- Format: one JSON object per line, including timestamp, level, message, logger, and correlation_id.
+- Correlation ID: a stable ID is set per Streamlit session; CLI tools generate a new one per run. You can also set a temporary ID via a context manager for specific actions.
+- Audit Trail: trades and domain events are recorded via an audit logger for traceability.
+
+Key APIs
+- Logging helpers live in `infra/logging.py`:
+    - `get_logger(name)`: standard JSON logger
+    - `get_correlation_id()`, `set_correlation_id(cid)`, `new_correlation_id()`
+    - `audit.trade(action, *, ticker, shares, price, status="success", reason=None, **extra)`
+    - `audit.event(name, **attrs)`
+
+Domain Errors
+- Centralized in `core/errors.py` and used across services/UI/CLI:
+    - `ValidationError` (subclasses `ValueError`) – invalid user/model input
+    - `MarketDataDownloadError` (subclasses `RuntimeError`) – download failures
+    - `NoMarketDataError` (subclasses `ValueError`) – no market data available
+    - `RepositoryError` (subclasses `RuntimeError`) – DB/repository failures
+    - `ConfigError`, `NotFoundError`, `PermissionError` – additional categories
+- Legacy shim: `services/exceptions/validation.ValidationError` aliases `core.errors.ValidationError` for backward compatibility.
+
+Usage conventions
+- Always raise domain-specific exceptions from services.
+- UI/CLI layers should catch domain errors, log them (JSON), surface user-friendly messages, and avoid raw tracebacks in logs.
+- Streamlit app seeds a session-level `correlation_id` so logs from interactions can be traced end-to-end.
+
+Example patterns (conceptual)
+- Create a logger: `logger = get_logger(__name__)`
+- Emit audit entry: `audit.trade("buy", ticker="AAPL", shares=10, price=150.0, status="success")`
+- Set a scoped correlation ID in scripts: `with new_correlation_id(): ...`
+
+## �🔧 Configuration
 
 The application uses SQLite for data storage in the `data/` directory. Configuration options are available in:
 - `.streamlit/config.toml` - Streamlit app configuration and theming

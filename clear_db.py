@@ -1,52 +1,78 @@
 #!/usr/bin/env python3
 """Simple script to clear the trading database and reset to default state."""
 
-import sqlite3
 import os
+import sqlite3
+from pathlib import Path
 
-def clear_database():
-    db_path = 'data/trading.db'
-    
+from config.settings import settings
+from infra.logging import get_logger, new_correlation_id
+
+logger = get_logger(__name__)
+
+
+def clear_database() -> None:
+    db_path = str(settings.paths.db_file)
+
     if not os.path.exists(db_path):
-        print("❌ Database file not found.")
+        logger.error(
+            "Database file not found.",
+            extra={"event": "db_clear", "status": "missing", "db_path": db_path},
+        )
         return
-    
-    print(f"🗑️  Clearing database: {db_path}")
-    
+
+    logger.info(
+        "Clearing database", extra={"event": "db_clear", "status": "starting", "db_path": db_path}
+    )
+
     try:
-        # Connect to database
+        # Ensure directory and connect
+        Path(settings.paths.data_dir).mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        
+
         # Clear all tables
-        tables = ['portfolio', 'cash', 'trade_log', 'portfolio_history']
-        
+        tables = ["portfolio", "cash", "trade_log", "portfolio_history"]
+
         for table in tables:
             try:
-                cursor.execute(f'DELETE FROM {table}')
+                cursor.execute(f"DELETE FROM {table}")
                 rows_deleted = cursor.rowcount
-                print(f"✅ Cleared {table}: {rows_deleted} rows deleted")
+                logger.info(
+                    "Cleared table",
+                    extra={"event": "db_clear", "table": table, "rows_deleted": rows_deleted},
+                )
             except sqlite3.Error as e:
-                print(f"⚠️  Error clearing {table}: {e}")
-        
+                logger.error(
+                    "Error clearing table",
+                    extra={"event": "db_clear", "table": table, "error": str(e)},
+                )
+
         # Insert default cash balance of $10,000
         try:
-            cursor.execute('INSERT INTO cash (balance) VALUES (?)', (10000.0,))
-            print("💰 Set initial cash balance to $10,000")
+            cursor.execute("INSERT INTO cash (balance) VALUES (?)", (10000.0,))
+            logger.info("Set initial cash balance", extra={"event": "db_clear", "cash": 10000.0})
         except sqlite3.Error as e:
-            print(f"⚠️  Error setting cash balance: {e}")
-        
+            logger.error("Error setting cash balance", extra={"event": "db_clear", "error": str(e)})
+
         # Commit changes
         conn.commit()
         conn.close()
-        
-        print("✅ Database cleared successfully!")
-        print("🚀 Ready to start fresh - you can now run the app!")
-        
+
+        logger.info(
+            "Database cleared successfully", extra={"event": "db_clear", "status": "success"}
+        )
+        logger.info(
+            "Ready to start fresh - you can now run the app!",
+            extra={"event": "db_clear", "next": "run_app"},
+        )
+
     except sqlite3.Error as e:
-        print(f"❌ Database error: {e}")
+        logger.error("Database error", extra={"event": "db_clear", "error": str(e)})
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        logger.error("Unexpected error", extra={"event": "db_clear", "error": str(e)})
+
 
 if __name__ == "__main__":
-    clear_database()
+    with new_correlation_id():
+        clear_database()

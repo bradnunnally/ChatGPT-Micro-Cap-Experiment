@@ -1,7 +1,7 @@
 """Navigation bar component used across pages."""
 
-from pathlib import Path
 import base64
+from pathlib import Path
 
 import streamlit as st
 
@@ -23,8 +23,10 @@ def navbar(active_page: str) -> None:
         """
         <style>
 
-            section[data-testid="stSidebar"] { display: none; }
-             button[aria-label="Main menu"] { display: none; }
+            /* Hide sidebar and hamburger */
+            section[data-testid="stSidebar"] { display: none !important; }
+            div[data-testid="stSidebarNav"] { display: none !important; }
+            button[aria-label="Main menu"] { display: none !important; }
 
             .nav-container {
                 display: flex;
@@ -49,7 +51,7 @@ def navbar(active_page: str) -> None:
         unsafe_allow_html=True,
     )
 
-    st.title("AI Assisted Trading")
+    st.title("AI Assisted Trading(DEV)")
 
     nav = st.container()
     with nav:
@@ -74,5 +76,3 @@ def navbar(active_page: str) -> None:
             """,
             unsafe_allow_html=True,
         )
-
-

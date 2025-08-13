@@ -5,16 +5,25 @@ from pathlib import Path
 import streamlit as st
 
 from components.nav import navbar
+from infra.logging import get_correlation_id, set_correlation_id
 from ui.dashboard import render_dashboard
 
 st.set_page_config(
-    page_title="AI Assisted Trading",
+    page_title="AI Assisted Trading (DEV)",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
+# Ensure a stable correlation ID per session for traceable logs
+if "correlation_id" not in st.session_state:
+    # get_correlation_id() will generate a new one lazily
+    st.session_state["correlation_id"] = get_correlation_id()
+else:
+    set_correlation_id(str(st.session_state["correlation_id"]))
+
 # Simple CSS for basic button improvements
-st.markdown("""
+st.markdown(
+    """
 <style>
 /* Basic button styling improvements */
 .stButton > button {
@@ -48,7 +57,9 @@ button[data-testid="baseButton-secondary"]:hover {
     transform: translateY(-1px);
 }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 navbar(Path(__file__).name)
 

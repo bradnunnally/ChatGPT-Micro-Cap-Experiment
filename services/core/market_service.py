@@ -1,25 +1,26 @@
 from typing import Optional
-import yfinance as yf
-from services.logging import logger
+
+from services.core.market_data_service import MarketDataService
+from services.core.validation import validate_ticker
+
 
 class MarketService:
+    """Facade used in tests; delegates to MarketDataService with caching and resilience."""
+
+    def __init__(self) -> None:
+        self._svc = MarketDataService()
+
     def get_current_price(self, ticker: str) -> Optional[float]:
         try:
-            data = yf.download(
-                ticker,
-                period="1d",
-                progress=False,
-                auto_adjust=True
-            )
-            
-            if data.empty:
-                return None
-                
-            return float(data["Close"].iloc[0])
-            
-        except Exception as e:
-            logger.error(f"Error getting price for {ticker}: {e}")
+            return self._svc.get_price(ticker)
+        except Exception:
+            # Keep contract: return None on failure
             return None
-    
+
     def validate_ticker(self, ticker: str) -> bool:
-        return self.get_current_price(ticker) is not None
+        try:
+            validate_ticker(ticker)
+            price = self.get_current_price(ticker)
+            return price is not None
+        except Exception:
+            return False

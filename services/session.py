@@ -1,8 +1,9 @@
 import streamlit as st
 
-from config import WATCHLIST_FILE
+from app_settings import settings
 from data.portfolio import load_portfolio
 from data.watchlist import load_watchlist
+from services.core.sqlite_repository import SqlitePortfolioRepository
 
 
 def init_session_state() -> None:
@@ -34,5 +35,9 @@ def init_session_state() -> None:
         st.session_state.cash = cash_amount
         st.session_state.needs_cash = needs_cash
 
-    if not st.session_state.watchlist and WATCHLIST_FILE.exists():
+    # Initialize a repository instance for persistence if not present
+    if "repo" not in st.session_state:
+        st.session_state.repo = SqlitePortfolioRepository()
+
+    if not st.session_state.watchlist and settings.paths.watchlist_file.exists():
         st.session_state.watchlist = load_watchlist()

@@ -1,0 +1,240 @@
+from __future__ import annotations
+
+import json
+import os
+import random
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+from config import is_dev_stage, get_provider
+
+# Provide a module-level 'yf' reference for tests that monkeypatch it. It will
+# be imported lazily if not already patched. Tests expect services.core.market_data_service.yf
+# to exist for monkeypatching network behavior.
+yf = None  # type: ignore
+
+from config.settings import settings
+from core.errors import (
+    MarketDataDownloadError,
+    NoMarketDataError,
+)
+from infra.logging import get_logger
+from services.core.validation import validate_ticker
+
+
+@dataclass
+class CircuitState:
+    failures: int = 0
+    opened_at: float = 0.0
+
+
+class MarketDataService:
+    """Resilient price lookup with cache, retries, rate limit, and circuit breaker."""
+
+    def __init__(
+        self,
+        ttl_seconds: int | None = None,
+        min_interval: float = 0.25,
+        max_retries: int = 3,
+        backoff_base: float = 0.3,
+        circuit_fail_threshold: int = 3,
+        circuit_cooldown: float = 60.0,
+        price_provider: callable = None,
+    ) -> None:
+        self._logger = get_logger(__name__)
+        self._ttl = ttl_seconds if ttl_seconds is not None else int(settings.cache_ttl_seconds)
+        self._min_interval = float(min_interval)
+        self._max_retries = int(max_retries)
+        self._backoff_base = float(backoff_base)
+        self._fail_threshold = int(circuit_fail_threshold)
+        self._cooldown = float(circuit_cooldown)
+
+        self._cache = {}  # symbol -> (price, ts)
+        self._circuit = {}  # symbol -> CircuitState
+        self._last_call_ts = 0.0
+        self._price_provider = price_provider
+
+        # Optional on-disk cache per day
+        self._disk_cache_dir = Path(settings.paths.data_dir) / "price_cache"
+        self._disk_cache_dir.mkdir(parents=True, exist_ok=True)
+        self._disk_cache_day = datetime.now(UTC).strftime("%Y-%m-%d")
+        self._disk_cache_path = self._disk_cache_dir / f"{self._disk_cache_day}.json"
+        self._daily_disk_cache = self._load_disk_cache(self._disk_cache_path)
+
+    def _load_disk_cache(self, path: Path) -> dict[str, float]:
+        try:
+            if path.exists():
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return {str(k): float(v) for k, v in data.items()}
+        except Exception:
+            pass
+        return {}
+
+    def _save_disk_cache(self) -> None:
+        try:
+            tmp = self._disk_cache_path.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._daily_disk_cache, f, separators=(",", ":"))
+            os.replace(tmp, self._disk_cache_path)
+        except Exception:
+            pass
+
+    def _now(self) -> float:
+        return time.time()
+
+    def _rate_limit(self) -> None:
+        now_ts = self._now()
+        elapsed = now_ts - self._last_call_ts
+        if elapsed < self._min_interval:
+            time.sleep(max(0.0, self._min_interval - elapsed))
+        self._last_call_ts = self._now()
+
+    def _circuit_open(self, ticker: str) -> bool:
+        state = self._circuit.get(ticker)
+        if not state:
+            return False
+        if state.failures < self._fail_threshold:
+            return False
+        # Open if within cooldown
+        if (self._now() - state.opened_at) < self._cooldown:
+            return True
+        # Cooldown elapsed -> half-open; reset failures and allow a try
+        self._circuit[ticker] = CircuitState(failures=0, opened_at=0.0)
+        return False
+
+    def _record_failure(self, ticker: str) -> None:
+        state = self._circuit.get(ticker) or CircuitState()
+        state.failures += 1
+        if state.failures >= self._fail_threshold:
+            state.opened_at = self._now()
+            self._logger.error(
+                "circuit open",
+                extra={
+                    "event": "market_circuit_open",
+                    "ticker": ticker,
+                    "failures": state.failures,
+                },
+            )
+        self._circuit[ticker] = state
+
+    def _record_success(self, ticker: str, price: float) -> None:
+        # Reset breaker on success
+        self._circuit[ticker] = CircuitState()
+        # Update disk cache daily map
+        self._daily_disk_cache[ticker] = float(price)
+        self._save_disk_cache()
+
+    def get_price(self, ticker: str) -> Optional[float]:
+        # Validate ticker first
+        validate_ticker(ticker)
+        symbol = ticker.strip().upper()
+
+        # Check in-memory cache
+        now_ts = self._now()
+        cached = self._cache.get(symbol)
+        if cached and (now_ts - cached[1]) < self._ttl:
+            return cached[0]
+
+        # If a test price provider is injected, use it (for unit tests)
+        if self._price_provider is not None:
+            price = self._price_provider(symbol)
+            self._cache[symbol] = (price, now_ts)
+            self._record_success(symbol, price)
+            return price
+
+        # Refresh on-disk cache day rollover
+        day_now = datetime.now(UTC).strftime("%Y-%m-%d")
+        if day_now != self._disk_cache_day:
+            self._disk_cache_day = day_now
+            self._disk_cache_path = self._disk_cache_dir / f"{self._disk_cache_day}.json"
+            self._daily_disk_cache = self._load_disk_cache(self._disk_cache_path)
+
+        # Check daily disk cache (acts as a gentle fallback)
+        if symbol in self._daily_disk_cache:
+            price = float(self._daily_disk_cache[symbol])
+            self._cache[symbol] = (price, now_ts)
+            return price
+
+        # Circuit breaker
+        if self._circuit_open(symbol):
+            self._logger.error(
+                "circuit blocked",
+                extra={"event": "market_circuit_block", "ticker": symbol},
+            )
+            return None
+
+        # Rate limit before network
+        self._rate_limit()
+
+        # Retry with jittered exponential backoff
+        attempt = 0
+        last_exc: Exception | None = None
+        # Fast synthetic path in dev_stage (no network calls)
+        if is_dev_stage():
+            try:
+                provider = get_provider()
+                import pandas as pd
+                end = pd.Timestamp.utcnow().normalize()
+                start = end - pd.Timedelta(days=90)
+                hist = provider.get_history(symbol, start, end)
+                if not hist.empty and "Close" in hist.columns:
+                    price = float(hist["Close"].dropna().iloc[-1])
+                    self._cache[symbol] = (price, self._now())
+                    self._record_success(symbol, price)
+                    return price
+            except Exception:
+                return None
+
+        global yf
+        if yf is None:  # allow tests to monkeypatch before first use
+            import yfinance as _yf  # type: ignore
+            yf = _yf
+        while attempt < self._max_retries:
+            try:
+                data = yf.download(symbol, period="1d", progress=False, auto_adjust=True)
+                if data is None or data.empty or "Close" not in data.columns:
+                    # Try Ticker().history() as a fallback
+                    t = yf.Ticker(symbol)
+                    hist = t.history(period="5d")
+                    if hist is None or hist.empty or "Close" not in hist.columns:
+                        raise NoMarketDataError("No market data available.")
+                    close = hist["Close"].dropna()
+                    if close.empty:
+                        raise NoMarketDataError("No market data available.")
+                    price = float(close.iloc[-1])
+                else:
+                    # Respect DatetimeIndex behavior like services.market
+                    if isinstance(data.index, pd.DatetimeIndex):
+                        price = float(data["Close"].iloc[-1])
+                    else:
+                        price = float(data["Close"].iloc[0])
+
+                # Cache and return
+                self._cache[symbol] = (price, self._now())
+                self._record_success(symbol, price)
+                return price
+
+            except NoMarketDataError as e:
+                last_exc = e
+                self._record_failure(symbol)
+                break
+            except Exception as e:
+                last_exc = e
+                self._record_failure(symbol)
+                # Backoff with jitter
+                delay = self._backoff_base * (2**attempt)
+                delay *= 1 + random.uniform(-0.2, 0.2)
+                time.sleep(max(0.0, delay))
+                attempt += 1
+
+        if isinstance(last_exc, NoMarketDataError):
+            return None
+        if last_exc is not None:
+            raise MarketDataDownloadError(str(last_exc))
+        return None

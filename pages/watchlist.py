@@ -1,8 +1,18 @@
 from pathlib import Path
-from datetime import datetime
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
+
+from components.nav import navbar
+from services.market import fetch_price
+from services.time import get_clock
+from services.watchlist_service import (
+    add_to_watchlist,
+    get_watchlist,
+    load_watchlist_prices,
+    remove_from_watchlist,
+)
+from ui.forms import show_buy_form
 
 st.set_page_config(
     page_title="Watchlist",
@@ -20,16 +30,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-from components.nav import navbar
-from services.watchlist_service import (
-    get_watchlist,
-    add_to_watchlist,
-    remove_from_watchlist,
-    load_watchlist_prices,
-)
-from services.market import fetch_price
-from ui.forms import show_buy_form
 
 
 def watchlist_page():
@@ -53,7 +53,6 @@ def watchlist_page():
             else:
                 add_to_watchlist(symbol)
                 st.session_state["new_ticker"] = ""
-                
 
     input_col.text_input(
         "Add ticker to watchlist",
@@ -65,7 +64,7 @@ def watchlist_page():
     # Load current watchlist and prices
     watchlist = get_watchlist()
     prices_df = load_watchlist_prices(watchlist)
-    last_update = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+    last_update = get_clock().now().strftime("%B %d, %Y at %I:%M %p")
     st.caption(f"Last update: {last_update}")
 
     # Render table header
@@ -80,11 +79,11 @@ def watchlist_page():
     # Loop through watchlist DataFrame
     if not prices_df.empty:
         for idx, row in prices_df.iterrows():
-            ticker = row['ticker']
-            price = row.get('current_price')
+            ticker = row["ticker"]
+            price = row.get("current_price")
             if price is None or pd.isna(price):
                 continue
-            
+
             change_pct = None
             row_cols = st.columns([3, 2, 2, 1, 1])
             row_cols[0].write(ticker)
@@ -101,6 +100,7 @@ def watchlist_page():
                     show_buy_form(ticker_default=ticker)
     else:
         st.write("Your watchlist is empty. Add some tickers above!")
+
 
 if __name__ == "__main__":
     watchlist_page()

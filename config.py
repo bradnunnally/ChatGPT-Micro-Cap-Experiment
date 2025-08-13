@@ -1,20 +1,57 @@
-from datetime import datetime
-from pathlib import Path
+from __future__ import annotations
 
-from portfolio import PORTFOLIO_COLUMNS
+"""Environment selection & provider factory.
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-DATA_DIR.mkdir(exist_ok=True)
+Reads APP_ENV from environment (optionally .env via python-dotenv) and creates the
+appropriate DataProvider strategy.
+"""
 
-PORTFOLIO_CSV = DATA_DIR / "chatgpt_portfolio_update.csv"
-TRADE_LOG_CSV = DATA_DIR / "chatgpt_trade_log.csv"
-WATCHLIST_FILE = DATA_DIR / "watchlist.json"
+import os
+from dataclasses import dataclass
+from typing import Optional
+from datetime import date
 
-# SQLite database used for persistent storage of the portfolio and trade logs.
-# The CSV paths above remain for backwards compatibility and migration only.
-DB_FILE = DATA_DIR / "trading.db"
+from dotenv import load_dotenv
 
-COL_TICKER, COL_SHARES, COL_STOP, COL_PRICE, COL_COST = PORTFOLIO_COLUMNS
+from data_providers import SyntheticDataProvider, YFinanceDataProvider, DataProvider
 
-TODAY = datetime.today().strftime("%Y-%m-%d")
+VALID_ENVS = {"dev_stage", "production"}
+DEFAULT_ENV = "production"
+
+
+@dataclass
+class AppConfig:
+    env: str
+
+
+def _read_env_var(raw: Optional[str]) -> str:
+    if not raw:
+        return DEFAULT_ENV
+    if raw not in VALID_ENVS:
+        raise ValueError(f"Unknown APP_ENV '{raw}'. Allowed: {sorted(VALID_ENVS)}")
+    return raw
+
+
+def resolve_environment(cli_env: Optional[str] = None) -> str:
+    load_dotenv(override=False)
+    if cli_env:
+        return _read_env_var(cli_env)
+    return _read_env_var(os.environ.get("APP_ENV"))
+
+
+def get_provider(cli_env: Optional[str] = None) -> DataProvider:
+    env = resolve_environment(cli_env)
+    if env == "dev_stage":
+        return SyntheticDataProvider(seed=123)
+    return YFinanceDataProvider()
+
+
+def bootstrap_defaults(provider: DataProvider, tickers: list[str], start: date, end: date) -> None:
+    for t in tickers:
+        try:
+            provider.get_history(t, start, end)
+        except Exception:
+            pass
+
+
+__all__ = ["get_provider", "resolve_environment", "bootstrap_defaults", "AppConfig"]
