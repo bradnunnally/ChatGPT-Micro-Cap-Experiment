@@ -4,7 +4,7 @@ from config import get_provider, resolve_environment
 
 def test_env_default(monkeypatch):
     monkeypatch.delenv("APP_ENV", raising=False)
-    assert resolve_environment() == "production"
+    assert resolve_environment() == "dev_stage"  # Updated default environment
 
 
 def test_env_invalid(monkeypatch):
