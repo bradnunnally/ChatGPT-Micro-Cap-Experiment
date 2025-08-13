@@ -1,6 +1,7 @@
 import pandas as pd
 
 from config import COL_COST, COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY
+from config.providers import is_dev_stage
 from data.db import get_connection, init_db
 from portfolio import ensure_schema
 from services.core.portfolio_service import compute_snapshot as _compute_snapshot
@@ -51,6 +52,11 @@ def load_portfolio():
             cash_row = None
 
     if portfolio_df.empty and cash_row is None:
+        # Attempt synthetic seeding when in dev_stage to provide initial demo data
+        if is_dev_stage():  # pragma: no cover - environment specific convenience
+            _seed_dev_stage_portfolio()
+            # Re-run to load freshly seeded data
+            return load_portfolio()
         return PortfolioResult(empty_portfolio, 0.0, True)
 
     portfolio = ensure_schema(portfolio_df) if not portfolio_df.empty else empty_portfolio
@@ -99,6 +105,117 @@ def load_portfolio():
         except Exception:
             cash = 0.0
     return PortfolioResult(portfolio, cash, portfolio_df.empty)
+
+
+def _seed_dev_stage_portfolio() -> None:
+    """Seed a minimal synthetic portfolio and snapshot for dev_stage if DB is empty.
+
+    Creates a couple of micro-cap placeholder positions plus a starting cash balance
+    so the UI shows meaningful data without any manual input. Idempotent: only runs
+    when the portfolio table is empty and cash not yet set.
+    """
+    try:
+        init_db()
+        with get_connection() as conn:
+            existing = conn.execute("SELECT COUNT(*) FROM portfolio").fetchone()[0]
+            cash_row = conn.execute("SELECT balance FROM cash WHERE id = 0").fetchone()
+            if existing > 0 or cash_row is not None:
+                return
+            seed_rows = [
+                ("SYNAAA", 100.0, 4.50, 5.00, 500.0),  # ticker, shares, stop_loss, buy_price, cost_basis
+                ("SYNBBB", 50.0, 7.25, 8.00, 400.0),
+            ]
+            for r in seed_rows:
+                conn.execute(
+                    "INSERT INTO portfolio (ticker, shares, stop_loss, buy_price, cost_basis) VALUES (?, ?, ?, ?, ?)",
+                    r,
+                )
+            # Seed starting cash
+            conn.execute("INSERT OR REPLACE INTO cash (id, balance) VALUES (0, ?)", (10_000.00,))
+        # Build and persist first snapshot so portfolio_history contains dynamic fields
+        seeded, cash, _ = load_portfolio()  # type: ignore
+        save_portfolio_snapshot(seeded, cash)  # type: ignore[arg-type]
+        
+        # Generate historical data if not already present
+        _generate_historical_data()
+    except Exception:
+        # Best-effort; failures here should not break application startup
+        pass
+
+
+def _generate_historical_data(days_back: int = 30) -> None:
+    """Generate historical portfolio snapshots for realistic data visualization."""
+    try:
+        from datetime import datetime, timedelta
+        import random
+        
+        with get_connection() as conn:
+            # Check if historical data already exists
+            existing_count = conn.execute(
+                "SELECT COUNT(DISTINCT date) FROM portfolio_history WHERE date != ? AND ticker != 'TOTAL'",
+                (datetime.now().strftime("%Y-%m-%d"),)
+            ).fetchone()[0]
+            
+            if existing_count >= days_back // 2:
+                return  # Historical data already exists
+            
+            # Base positions and prices for simulation
+            base_positions = [
+                {"ticker": "SYNAAA", "shares": 100.0, "buy_price": 5.0, "stop_loss": 4.5},
+                {"ticker": "SYNBBB", "shares": 50.0, "buy_price": 8.0, "stop_loss": 7.25},
+            ]
+            cash_balance = 10000.0
+            base_prices = {"SYNAAA": 5.0, "SYNBBB": 8.0}
+            
+            # Clear existing historical data (keep today's)
+            today = datetime.now().strftime("%Y-%m-%d")
+            conn.execute("DELETE FROM portfolio_history WHERE date != ?", (today,))
+            
+            # Generate historical data
+            for i in range(days_back, 0, -1):
+                date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+                total_value = 0.0
+                total_pnl = 0.0
+                
+                for pos in base_positions:
+                    ticker = pos["ticker"]
+                    shares = pos["shares"]
+                    buy_price = pos["buy_price"]
+                    stop_loss = pos["stop_loss"]
+                    
+                    # Generate realistic price movement
+                    days_from_start = days_back - i
+                    trend_factor = 1 + (days_from_start * 0.02)  # 2% growth per day on average
+                    volatility = random.uniform(0.85, 1.15)  # ±15% daily volatility
+                    current_price = base_prices[ticker] * trend_factor * volatility
+                    current_price = max(current_price, buy_price * 0.5)  # Floor price
+                    
+                    value = round(current_price * shares, 2)
+                    pnl = round((current_price - buy_price) * shares, 2)
+                    
+                    total_value += value
+                    total_pnl += pnl
+                    
+                    # Insert position row
+                    conn.execute("""
+                        INSERT INTO portfolio_history 
+                        (date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        date, ticker, shares, buy_price, stop_loss, current_price, value, pnl, "HOLD", "", ""
+                    ))
+                
+                # Insert TOTAL row
+                total_equity = total_value + cash_balance
+                conn.execute("""
+                    INSERT INTO portfolio_history 
+                    (date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    date, "TOTAL", "", "", "", "", round(total_value, 2), round(total_pnl, 2), "", round(cash_balance, 2), round(total_equity, 2)
+                ))
+    except Exception:
+        pass  # Best-effort historical data generation
 
 
 def load_cash_balance() -> float:

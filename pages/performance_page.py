@@ -29,8 +29,8 @@ def load_portfolio_history(db_path: str) -> pd.DataFrame:
     conn.close()
 
     # Replace empty strings and convert to float
-    df["total_equity"] = pd.to_numeric(df["total_equity"].replace("", np.nan), errors="coerce")
-    df["total_value"] = pd.to_numeric(df["total_value"].replace("", np.nan), errors="coerce")
+    df["total_equity"] = pd.to_numeric(df["total_equity"].replace("", np.nan), errors="coerce").infer_objects(copy=False)
+    df["total_value"] = pd.to_numeric(df["total_value"].replace("", np.nan), errors="coerce").infer_objects(copy=False)
 
     # Drop rows where both values are NaN
     df = df.dropna(subset=["total_equity", "total_value"], how="all")
@@ -38,46 +38,85 @@ def load_portfolio_history(db_path: str) -> pd.DataFrame:
     return df
 
 
-def create_performance_chart(hist_filtered: pd.DataFrame) -> go.Figure:
-    """Create a performance chart with overall and individual ticker lines."""
+def create_performance_chart(hist_filtered: pd.DataFrame) -> tuple[go.Figure, dict]:
+    """Create a performance chart with overall and individual ticker lines.
+    
+    Returns:
+        tuple: (figure, legend_info) where legend_info contains ticker-color mappings
+    """
     fig = go.Figure()
+    legend_info = {}
 
+    # Define a color palette for consistency
+    colors = [
+        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", 
+        "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"
+    ]
+    
     # Add overall portfolio performance line
     portfolio_data = hist_filtered[hist_filtered["ticker"] == "TOTAL"]
+    portfolio_color = "#1f77b4"
     fig.add_trace(
         go.Scatter(
             x=portfolio_data["date"],
             y=portfolio_data["total_equity"],
             name="Overall Portfolio",
-            line=dict(width=3, color="#1f77b4"),
+            line=dict(width=3, color=portfolio_color),
         )
     )
+    legend_info["Overall Portfolio"] = portfolio_color
 
     # Add individual ticker performance lines
+    color_index = 1  # Start from second color since first is used for Overall Portfolio
     for ticker in hist_filtered["ticker"].unique():
         if ticker != "TOTAL":
             ticker_data = hist_filtered[hist_filtered["ticker"] == ticker]
+            ticker_color = colors[color_index % len(colors)]
             fig.add_trace(
                 go.Scatter(
                     x=ticker_data["date"],
                     y=ticker_data["total_value"],
                     name=ticker,
-                    line=dict(width=1),
+                    line=dict(width=1, color=ticker_color),
                     opacity=0.7,
                 )
             )
+            legend_info[ticker] = ticker_color
+            color_index += 1
 
     fig.update_layout(
         title="Portfolio Performance",
         xaxis_title="Date",
         yaxis_title="Value ($)",
         hovermode="x unified",
-        showlegend=True,
-        legend=dict(
-            yanchor="top", y=0.99, xanchor="left", x=0.01, bgcolor="rgba(255, 255, 255, 0.8)"
-        ),
+        showlegend=False,  # Hide the default legend
     )
-    return fig
+    return fig, legend_info
+
+
+def display_chart_legend(legend_info: dict) -> None:
+    """Display a custom legend below the chart showing ticker-color mappings."""
+    if not legend_info:
+        return
+        
+    st.markdown("#### Chart Legend")
+    
+    # Create columns for the legend items
+    legend_items = list(legend_info.items())
+    cols = st.columns(min(len(legend_items), 4))  # Max 4 columns
+    
+    for i, (ticker, color) in enumerate(legend_items):
+        col_idx = i % len(cols)
+        with cols[col_idx]:
+            # Create a colored indicator using HTML/CSS
+            st.markdown(
+                f'<div style="display: flex; align-items: center; margin-bottom: 5px;">'
+                f'<div style="width: 20px; height: 3px; background-color: {color}; margin-right: 8px; '
+                f'border-radius: 2px;"></div>'
+                f'<span style="font-size: 14px;">{ticker}</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
 
 def calculate_kpis(hist_filtered: pd.DataFrame) -> dict:
@@ -195,8 +234,11 @@ def main() -> None:
 
     with col_chart:
         if not hist_filtered.empty:
-            fig = create_performance_chart(hist_filtered)
+            fig, legend_info = create_performance_chart(hist_filtered)
             st.plotly_chart(fig, use_container_width=True)
+            
+            # Display the custom legend below the chart
+            display_chart_legend(legend_info)
         else:
             st.info("No data available for the selected date range.")
 

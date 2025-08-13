@@ -10,8 +10,15 @@ def show_manual_pricing_section():
     with st.expander("Manual Price Overrides", expanded=False):
         st.caption("Set manual prices when market data APIs are unavailable")
         
-        # Current manual prices
-        manual_prices = manual_pricing_service.get_all_prices()
+        try:
+            # Current manual prices
+            manual_prices = manual_pricing_service.get_all_prices()
+        except Exception as e:
+            st.error(f"Error loading manual prices: {e}")
+            # Initialize the session state manually as a fallback
+            if "manual_prices" not in st.session_state:
+                st.session_state["manual_prices"] = {}
+            manual_prices = {}
         
         if manual_prices:
             st.subheader("Current Manual Prices")

@@ -22,9 +22,14 @@ def show_cash_section() -> None:
 
     if st.session_state.show_cash_form:
         with st.form("add_cash_form"):
-            st.number_input("Amount", key="ac_amount", min_value=0.0, step=100.0)
+            amount_to_add = st.number_input("Amount", min_value=0.0, step=100.0, value=100.0)
             submitted = st.form_submit_button("Add", type="primary")
             if submitted:
-                st.session_state.cash += st.session_state.ac_amount
-                st.session_state.show_cash_form = False
-                save_portfolio_snapshot(st.session_state.portfolio, st.session_state.cash)
+                if amount_to_add > 0:
+                    st.session_state.cash += amount_to_add
+                    save_portfolio_snapshot(st.session_state.portfolio, st.session_state.cash)
+                    st.success(f"Successfully added ${amount_to_add:,.2f} to cash balance!")
+                    st.session_state.show_cash_form = False
+                    st.rerun()
+                else:
+                    st.error("Please enter an amount greater than 0")

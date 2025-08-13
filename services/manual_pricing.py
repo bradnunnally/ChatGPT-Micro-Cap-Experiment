@@ -12,11 +12,16 @@ class ManualPricingService:
     
     def __init__(self):
         self._session_key = "manual_prices"
+        self._ensure_initialized()
+    
+    def _ensure_initialized(self):
+        """Ensure the session state key is initialized."""
         if self._session_key not in st.session_state:
             st.session_state[self._session_key] = {}
     
     def set_price(self, ticker: str, price: float) -> None:
         """Set a manual price override for a ticker."""
+        self._ensure_initialized()
         ticker = ticker.upper().strip()
         if price <= 0:
             raise ValueError("Price must be positive")
@@ -26,11 +31,13 @@ class ManualPricingService:
     
     def get_price(self, ticker: str) -> Optional[float]:
         """Get manual price override for a ticker."""
+        self._ensure_initialized()
         ticker = ticker.upper().strip()
         return st.session_state[self._session_key].get(ticker)
     
     def remove_price(self, ticker: str) -> None:
         """Remove manual price override for a ticker."""
+        self._ensure_initialized()
         ticker = ticker.upper().strip()
         if ticker in st.session_state[self._session_key]:
             del st.session_state[self._session_key][ticker]
@@ -38,20 +45,23 @@ class ManualPricingService:
     
     def get_all_prices(self) -> Dict[str, float]:
         """Get all manual price overrides."""
+        self._ensure_initialized()
         return dict(st.session_state[self._session_key])
     
     def clear_all(self) -> None:
         """Clear all manual price overrides."""
+        self._ensure_initialized()
         st.session_state[self._session_key] = {}
         logger.info("All manual prices cleared")
     
     def has_price(self, ticker: str) -> bool:
         """Check if a manual price exists for a ticker."""
+        self._ensure_initialized()
         ticker = ticker.upper().strip()
         return ticker in st.session_state[self._session_key]
 
 
-# Global instance
+# Global instance with proper initialization
 manual_pricing_service = ManualPricingService()
 
 
