@@ -2,6 +2,14 @@
 
 import streamlit as st
 from services.manual_pricing import manual_pricing_service
+import os
+
+LEGACY_PROVIDER_FLAG_ENV = {"0", "", None}
+
+def _using_micro_provider() -> bool:
+    """Determine if micro provider mode is active (Finnhub or Synthetic)."""
+    flag = os.getenv("ENABLE_MICRO_PROVIDERS") or os.getenv("APP_USE_FINNHUB")
+    return (flag or "").lower() in {"1", "true", "yes", "on"}
 
 
 def show_manual_pricing_section():
@@ -87,12 +95,13 @@ def show_manual_pricing_section():
 
 
 def show_api_status_warning():
-    """Show warning when API is having issues."""
-    
+    """Show warning when API is having issues for legacy provider only."""
+    if _using_micro_provider():
+    # Placeholder: could show micro provider health indicators here
+        return
     st.warning(
         "⚠️ **Market Data API Issues Detected**\n\n"
-        "Yahoo Finance API is currently experiencing rate limiting. "
-        "Current prices may not be up to date. You can:\n"
+        "Yahoo Finance API may be rate limited. Current prices may lag. You can:\n"
         "- Use manual price overrides below for accurate portfolio values\n"
         "- Continue trading (buy/sell still works without live prices)\n"
         "- Wait for API to recover (prices will auto-update)"

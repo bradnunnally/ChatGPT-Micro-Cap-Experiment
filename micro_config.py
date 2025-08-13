@@ -40,8 +40,9 @@ def resolve_env(cli_env: Optional[str] = None) -> str:
 
 
 def get_settings(cli_env: Optional[str] = None) -> AppSettings:
-    # Load dotenv lazily here so pure env resolution tests are unaffected by local .env
-    load_dotenv(override=False)
+    # Load dotenv lazily except during pytest (so tests can monkeypatch/delenv reliably)
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        load_dotenv(override=False)
     env = resolve_env(cli_env)
     api_key = os.getenv("FINNHUB_API_KEY")
     cache_dir = os.getenv("CACHE_DIR", "data/cache")

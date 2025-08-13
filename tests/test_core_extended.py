@@ -4,32 +4,26 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 
 
-@patch("yfinance.Ticker")
 class TestMarketServiceCore:
     """Test core market service functionality."""
 
-    def test_market_service_init(self, mock_ticker):
+    def test_market_service_init(self):
         """Test market service initialization."""
         from services.core.market_service import MarketService
 
         service = MarketService()
         assert service is not None
 
-    def test_market_service_get_price(self, mock_ticker):
+    def test_market_service_get_price(self):
         """Test getting price from market service."""
         from services.core.market_service import MarketService
 
         # Mock ticker data
-        mock_ticker_instance = Mock()
-        mock_ticker_instance.info = {"currentPrice": 150.0}
-        mock_ticker.return_value = mock_ticker_instance
-
         service = MarketService()
         try:
             price = service.get_current_price("AAPL")
             # Should return a price or None
         except Exception:
-            # May fail due to yfinance dependencies
             pass
 
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-"""Environment selection & provider factory.
+"""Legacy provider factory (deprecated).
 
-Reads APP_ENV from environment (optionally .env via python-dotenv) and creates the
-appropriate DataProvider strategy.
+This module now delegates to :mod:`micro_config` so the application uses the
+Finnhub/Synthetic provider system exclusively. Legacy yfinance paths removed.
+retained only for backward compatible tests and will be removed.
 """
 
 import os
@@ -12,11 +13,14 @@ from typing import Optional
 from datetime import date
 
 from dotenv import load_dotenv
-
-from data_providers import SyntheticDataProvider, YFinanceDataProvider, DataProvider
+try:  # pragma: no cover
+    from micro_config import get_provider as micro_get_provider
+    from micro_data_providers import MarketDataProvider as DataProvider  # type: ignore
+except Exception:  # Fallback for tests expecting DataProvider symbol
+    from data_providers import SyntheticDataProvider as DataProvider  # type: ignore
 
 VALID_ENVS = {"dev_stage", "production"}
-DEFAULT_ENV = "production"
+DEFAULT_ENV = "dev_stage"  # default to synthetic/offline mode for safety
 
 
 @dataclass
@@ -39,11 +43,17 @@ def resolve_environment(cli_env: Optional[str] = None) -> str:
     return _read_env_var(os.environ.get("APP_ENV"))
 
 
-def get_provider(cli_env: Optional[str] = None) -> DataProvider:
-    env = resolve_environment(cli_env)
-    if env == "dev_stage":
+def get_provider(cli_env: Optional[str] = None):  # type: ignore[override]
+    """Return micro provider (Synthetic in dev_stage, Finnhub in production).
+
+    Falls back to synthetic only if micro modules unavailable.
+    """
+    try:
+        return micro_get_provider(cli_env)  # type: ignore[misc]
+    except Exception:  # pragma: no cover - degraded path
+        # Late import fallback to avoid circulars
+        from data_providers import SyntheticDataProvider  # type: ignore
         return SyntheticDataProvider(seed=123)
-    return YFinanceDataProvider()
 
 
 def bootstrap_defaults(provider: DataProvider, tickers: list[str], start: date, end: date) -> None:
@@ -54,4 +64,13 @@ def bootstrap_defaults(provider: DataProvider, tickers: list[str], start: date, 
             pass
 
 
-__all__ = ["get_provider", "resolve_environment", "bootstrap_defaults", "AppConfig"]
+def is_dev_stage(env: Optional[str] = None) -> bool:
+    if env is None:
+        try:
+            from micro_config import resolve_env as _resolve_env  # type: ignore
+            return _resolve_env(None) == "dev_stage"
+        except Exception:
+            env = resolve_environment()
+    return env == "dev_stage"
+
+__all__ = ["get_provider", "resolve_environment", "bootstrap_defaults", "AppConfig", "is_dev_stage"]

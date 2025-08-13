@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-"""Pluggable market data history providers.
+"""Pluggable market data history providers (post‑migration).
 
-Two implementations:
- - SyntheticDataProvider: deterministic OHLCV generation for dev_stage
- - YFinanceDataProvider: real data via yfinance with per‑ticker on-disk cache
+Current implementations:
+ - SyntheticDataProvider: deterministic OHLCV generation for dev_stage / tests.
 
-The interface intentionally stays minimal for easy testability.
+Legacy yfinance provider removed after Finnhub migration. Tests and codepaths
+should rely on micro_config + micro_data_providers for real data.
 """
 
 from dataclasses import dataclass
@@ -78,104 +78,4 @@ class SyntheticDataProvider:
         return df
 
 
-@dataclass(slots=True)
-class YFinanceDataProvider:
-    """Real data provider backed by yfinance with per‑ticker parquet cache."""
-
-    cache_dir: str | Path = Path("data/cache")
-
-    def __post_init__(self):
-        self.cache_dir = Path(self.cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-
-    def _cache_file(self, ticker: str) -> Path:
-        return self.cache_dir / f"{ticker.upper()}_history.parquet"
-
-    def get_history(self, ticker: str, start: date, end: date, *, force_refresh: bool = False) -> pd.DataFrame:  # noqa: D401
-        # Lazy import to avoid network dependencies at module import time
-        import yfinance as yf  # type: ignore
-
-        cache_file = self._cache_file(ticker)
-        if cache_file.exists() and not force_refresh:
-            try:
-                cached = pd.read_parquet(cache_file)
-                if (
-                    not cached.empty
-                    and cached["date"].min() <= pd.Timestamp(start)
-                    and cached["date"].max() >= pd.Timestamp(end)
-                ):
-                    return cached[(cached["date"] >= pd.Timestamp(start)) & (cached["date"] <= pd.Timestamp(end))].reset_index(drop=True)
-            except Exception:  # pragma: no cover - corrupted cache
-                pass
-
-        dl_start = start
-        if cache_file.exists() and not force_refresh:
-            try:
-                cached = pd.read_parquet(cache_file)
-                if not cached.empty:
-                    dl_start = min(start, cached["date"].min().date())
-            except Exception:
-                pass
-
-        df = yf.download(
-            ticker,
-            start=dl_start,
-            end=end + pd.Timedelta(days=1),
-            auto_adjust=True,
-            progress=False,
-        )
-        if df.empty:
-            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])  # pragma: no cover
-
-        df = df.reset_index().rename(
-            columns={
-                df.columns[0]: "date",
-                "Open": "open",
-                "High": "high",
-                "Low": "low",
-                "Close": "close",
-                "Adj Close": "close",
-                "Volume": "volume",
-            }
-        )
-        # Defensive: ensure we have a 'date' column (some edge mocks may keep original name)
-        if "date" not in df.columns:
-            for candidate in ("Date", "datetime", "index"):
-                if candidate in df.columns:
-                    df = df.rename(columns={candidate: "date"})
-                    break
-        # Normalize dtype
-        if "date" in df.columns:
-            try:
-                df["date"] = pd.to_datetime(df["date"])
-            except Exception:  # pragma: no cover
-                pass
-        if "Volume" in df.columns and "volume" not in df.columns:
-            df = df.rename(columns={"Volume": "volume"})
-        df["ticker"] = ticker.upper()
-        df = df.sort_values("date")
-
-        try:
-            if cache_file.exists() and not force_refresh:
-                try:
-                    existing = pd.read_parquet(cache_file)
-                    combined = (
-                        pd.concat([existing, df], ignore_index=True)
-                        .drop_duplicates(subset=["date"], keep="last")
-                        .sort_values("date")
-                    )
-                    combined.to_parquet(cache_file, index=False)
-                    full = combined
-                except Exception:
-                    df.to_parquet(cache_file, index=False)
-                    full = df
-            else:
-                df.to_parquet(cache_file, index=False)
-                full = df
-        except Exception:  # pragma: no cover - cache write failure
-            full = df
-
-        return full[(full["date"] >= pd.Timestamp(start)) & (full["date"] <= pd.Timestamp(end))].reset_index(drop=True)
-
-
-__all__ = ["DataProvider", "SyntheticDataProvider", "YFinanceDataProvider"]
+__all__ = ["DataProvider", "SyntheticDataProvider"]

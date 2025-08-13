@@ -103,6 +103,11 @@ def render_dashboard() -> None:
     """Render the main dashboard view."""
 
     init_session_state()
+    # Ensure services + micro provider flag initialized early
+    try:
+        initialize_services()
+    except Exception:
+        pass
 
     feedback = st.session_state.pop("feedback", None)
     if feedback:
@@ -195,30 +200,25 @@ def render_dashboard() -> None:
                     "today" if next_day == now_ts.date() else next_open_dt.strftime("%a %b %d")
                 )
                 st.warning(f"Closed — opens {_fmt(next_open_dt)} ET {day_label}")
-                # Provider mode toggle (dev only)
-                if os.getenv("APP_ENV", "production") != "production":
-                    st.caption("Provider Mode")
-                    toggled = st.toggle(
-                        "Use micro providers (Finnhub/Synthetic)",
-                        value=st.session_state.use_micro_providers,
-                        help="When enabled and FINNHUB_API_KEY set (production), uses Finnhub; in dev uses synthetic.",
-                    )
-                    st.session_state.use_micro_providers = toggled
-                    # Show current provider name
-                    if toggled:
-                        try:
-                            from micro_config import get_provider as _gp
-                            prov = _gp()
-                            st.caption(f"Active: {prov.__class__.__name__}")
-                        except Exception:
-                            st.caption("Active: (failed to init micro provider)")
-                    else:
-                        st.caption("Active: Legacy yfinance path")
-                else:
-                    if st.session_state.use_micro_providers:
-                        st.caption("Provider: Micro (Finnhub)")
-                    else:
-                        st.caption("Provider: Legacy (yfinance)")
+
+            # --- Provider Mode + Caption (always shown) ---
+            app_env = os.getenv("APP_ENV", "production")
+            if app_env != "production":
+                st.caption("Provider Mode")
+                toggled = st.toggle(
+                    "Use micro providers (Finnhub/Synthetic)",
+                    value=st.session_state.get("use_micro_providers", False),
+                    help="When enabled and FINNHUB_API_KEY set (production), uses Finnhub; in dev uses synthetic.",
+                )
+                st.session_state.use_micro_providers = toggled
+
+            # Decide caption text
+            caption_txt = "Provider: "
+            if st.session_state.get("use_micro_providers"):
+                caption_txt += "Finnhub" if app_env == "production" else "Synthetic"
+            else:
+                caption_txt += "Disabled (fallback only)"
+            st.caption(caption_txt)
 
         port_table = summary_df[summary_df["Ticker"] != "TOTAL"].copy()
         header_cols = st.columns([4, 1, 1])

@@ -38,19 +38,4 @@ def mock_portfolio_data():
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_yfinance(monkeypatch):
-    """Mock yfinance to prevent API calls during tests."""
-
-    def mock_download(*args, **kwargs):
-        return pd.DataFrame(
-            {
-                "Close": [150.0],
-                "High": [155.0],
-                "Low": [145.0],
-                "Open": [148.0],
-                "Volume": [1000000],
-            }
-        )
-
-    monkeypatch.setattr("yfinance.download", mock_download)
+## Removed legacy yfinance fixture after migration to Finnhub/Synthetic providers.

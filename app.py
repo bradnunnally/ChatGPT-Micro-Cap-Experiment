@@ -1,12 +1,23 @@
 """Streamlit app for local portfolio tracking and AI‑assisted trading."""
 
 from pathlib import Path
+import os
 
 import streamlit as st
 
 from components.nav import navbar
+from dotenv import dotenv_values
 from infra.logging import get_correlation_id, set_correlation_id
 from ui.dashboard import render_dashboard
+
+# Manual .env ingestion (avoids find_dotenv() stack inspection issues under Streamlit reload)
+try:  # pragma: no cover
+    vals = dotenv_values(".env")
+    for k, v in vals.items():
+        if k not in os.environ and v is not None:
+            os.environ[k] = v
+except Exception:
+    pass
 
 st.set_page_config(
     page_title="AI Assisted Trading",

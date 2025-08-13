@@ -76,40 +76,34 @@ def show_user_guide() -> None:
         st.subheader("📊 Data Coverage & Provider Capabilities")
         st.markdown(
             """
-            The application supports two data provider modes:
+            The application uses a unified provider architecture with two runtime sources:
 
-            | Provider Mode | Source | Typical Use | Notes |
-            | ------------- | ------ | ----------- | ----- |
-            | Legacy | Yahoo Finance (yfinance) | Default historical + quotes | Broad coverage, no bid/ask microstructure |
-            | Micro (Production) | Finnhub | Quotes, profiles, news, earnings | Access depends on API key plan |
-            | Micro (Dev) | Synthetic Generator | Deterministic offline data | No live market dependency |
+            | Mode | Source | Typical Use | Notes |
+            | ---- | ------ | ----------- | ----- |
+            | Production | Finnhub | Live quotes, profiles, news, earnings | Requires `FINNHUB_API_KEY` |
+            | Development | Synthetic Generator | Deterministic offline quotes & history | Zero network usage |
 
-            **Current Finnhub capability detection** (runtime checks at startup):
-            - Quotes: ✔ (used for Current Price, PnL, % Change)
-            - Company Profile (exchange, sector, market cap): ✔
-            - Company News: ✔ (used for catalyst hints)
-            - Earnings Calendar: ✔ (next earnings date)
-            - Daily Candles (OHLCV): ✖ *Not available on this plan* (ADV20 & historical volatility omitted)
-            - Bid/Ask (spread): ✖ *Not available on this plan* (Spread column omitted)
+            **Capability Detection (automatic):**
+            - Quotes, Profile, News, Earnings Calendar: Enabled when Finnhub API key present.
+            - Daily Candles & Bid/Ask: Shown only if plan grants access; otherwise related columns (ADV20, Spread) are hidden.
 
             When a capability is unavailable:
-            - Related columns (e.g., ADV20, Spread) are hidden or marked *N/A*.
-            - Daily Summary liquidity metrics are skipped with a note.
-            - No repeated API retries after a permission (403) response (reduces noise & quota use).
+            - Dependent columns are omitted (e.g., Spread, ADV20).
+            - No repeated retries after 403 permission errors.
 
-            **Future Expansion Points**
-            - Liquidity Metrics: If candle access is granted, 20-day average volume (ADV20) and rolling volatility will auto-populate.
-            - Microstructure: If bid/ask becomes available, spread and implied slippage metrics can be displayed.
-            - Additional Catalysts: Corporate actions / insider transactions if exposed by provider.
+            **Synthetic Mode (`APP_ENV=dev_stage`):**
+            - Generates deterministic OHLCV paths for rapid UI & test feedback.
+            - Supplies placeholder profile/news/earnings data.
+            - Safe for offline development and CI (no external calls).
 
-            **Synthetic Mode (dev_stage)**
-            - Generates deterministic OHLCV paths for rapid UI development & testing.
-            - Provides pseudo profile, news, and earnings placeholders.
-            - Ensures zero external network usage for offline hacking.
+            **Switching Modes:**
+            1. For production: set `APP_ENV=production` and export `FINNHUB_API_KEY`.
+            2. For development: set `APP_ENV=dev_stage` (synthetic data auto-selected).
+            3. Toggle provider usage in the UI if a manual override is exposed.
 
-            To switch provider modes:
-            1. Set `ENABLE_MICRO_PROVIDERS=1` in `.env`.
-            2. Set `APP_ENV=production` and add `FINNHUB_API_KEY=...` for live Finnhub.
-            3. Use `APP_ENV=dev_stage` with the flag for synthetic data.
+            **Planned Enhancements:**
+            - Automatic activation of liquidity metrics when candle access becomes available.
+            - Bid/ask spread & microstructure metrics when level 1 quotes permit.
+            - Additional catalysts (corporate actions, insider activity) where supported.
             """
         )

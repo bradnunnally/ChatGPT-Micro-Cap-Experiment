@@ -1,6 +1,5 @@
 numpy==1.26.4
 pandas==2.2.2
-yfinance==0.2.38
 streamlit==1.36.0
 plotly==5.24.1
 streamlit-autorefresh>=0.0.2

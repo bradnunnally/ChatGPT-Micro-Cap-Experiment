@@ -1,20 +1,24 @@
 from __future__ import annotations
-"""Data provider environment resolution and factory.
+"""Deprecated legacy provider selection (will be removed).
 
-Centralizes logic for choosing between synthetic (offline) and yfinance-backed
-data providers. Only this module should know how APP_ENV maps to a provider.
+Now superseded by :mod:`micro_config` which provides Finnhub (production) and
+Synthetic (dev_stage) providers. This module is kept so existing imports do not
+break immediately; all functions now delegate to micro_config.
 """
 from dataclasses import dataclass
 import os
 from typing import Optional
 
-from data_providers import SyntheticDataProvider, YFinanceDataProvider
-from data_providers import DataProvider  # type: ignore
+try:  # pragma: no cover
+    from micro_config import get_provider as micro_get_provider, resolve_env as micro_resolve_env
+    from micro_data_providers import MarketDataProvider as DataProvider  # type: ignore
+except Exception:  # pragma: no cover
+    from data_providers import SyntheticDataProvider as DataProvider  # type: ignore
 from .settings import settings
 
 VALID_ENVS = {"dev_stage", "production"}
-# On dev_stage branch we default to synthetic data to avoid yfinance rate limits.
-DEFAULT_ENV = "dev_stage"  # NOTE: revert to "production" before merging to main
+# In dev_stage we default to synthetic data (deterministic, offline).
+DEFAULT_ENV = "production"
 
 
 @dataclass(slots=True)
@@ -41,13 +45,13 @@ def resolve_environment(override: Optional[str] = None) -> str:
     return _validate(env)
 
 
-def get_provider(override: Optional[str] = None, cli_env: Optional[str] = None) -> DataProvider:  # type: ignore[override]
-    # Support legacy parameter name cli_env for tests/backward compatibility.
+def get_provider(override: Optional[str] = None, cli_env: Optional[str] = None):  # type: ignore[override]
     eff = override or cli_env
-    env = resolve_environment(eff)
-    if env == "dev_stage":
+    try:
+        return micro_get_provider(eff)  # type: ignore[misc]
+    except Exception:  # pragma: no cover
+        from data_providers import SyntheticDataProvider  # type: ignore
         return SyntheticDataProvider(seed=123)
-    return YFinanceDataProvider()
 
 
 def bootstrap_defaults(provider: DataProvider, tickers: list[str], start, end) -> None:  # type: ignore[override]
@@ -67,12 +71,11 @@ __all__ = [
 
 
 def is_dev_stage(env: str | None = None) -> bool:
-    """Return True if effective environment is dev_stage.
-
-    Accepts optional env override to avoid recomputing.
-    """
     if env is None:
-        env = resolve_environment()
+        try:
+            return micro_resolve_env(None) == "dev_stage"  # type: ignore[misc]
+        except Exception:
+            env = resolve_environment()
     return env == "dev_stage"
 
 __all__.append("is_dev_stage")

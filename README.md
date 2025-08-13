@@ -31,11 +31,11 @@ Check out the latest results in [`docs/experiment_details`](docs/experiment_deta
 This repository now includes a **full-featured Streamlit web application** for portfolio management and analysis.
 
 ### Key Features:
-- **📱 Real-time Portfolio Dashboard** - Live portfolio tracking with current values and P&L
-- **📈 Performance Analytics** - Historical charts, KPIs, and performance metrics  
-- **💰 Trading Interface** - Buy/sell stocks with real-time price validation
-- **👁️ Watchlist Management** - Track potential investments and market opportunities
-- **📊 Data Export** - Download portfolio snapshots and historical data
+- **📱 Real-time Portfolio Dashboard** - Live tracking (Finnhub in production, synthetic in dev)
+- **📈 Performance Analytics** - Historical charts, KPIs, performance metrics  
+- **💰 Trading Interface** - Buy/sell stocks with validation
+- **👁️ Watchlist Management** - Track potential investments
+- **📊 Data Export** - Download snapshots & history
 - **🗄️ SQLite Database** - Persistent local data storage
 
 ### Quick Start (Synthetic Dev Mode):
@@ -61,37 +61,23 @@ By default in dev_stage the app now synthesizes ~90 calendar days (business-day 
 python app.py --env production
 ```
 
-Strategy selection uses APP_ENV: dev_stage -> deterministic synthetic data (90d history window), production -> Finnhub with a small JSON cache in data/cache for the included micro CLI app.
+Strategy selection uses APP_ENV: `dev_stage` -> deterministic synthetic data (90d history window), `production` -> Finnhub with per-endpoint JSON caching under `data/cache`.
 
-### Minimal CLI App (Finnhub integration)
+### Provider Architecture (Finnhub + Synthetic)
 
-This repo now includes a tiny standalone CLI (`micro_app.py`) that demonstrates using Finnhub in production and a synthetic provider in dev.
+Legacy Yahoo Finance code has been removed. A unified provider layer now supports:
 
-Setup:
+| Mode | Source | Usage |
+| ---- | ------ | ----- |
+| Production | Finnhub | Live quotes, profiles, news, earnings (API key required) |
+| Development (`dev_stage`) | Synthetic | Deterministic OHLCV + placeholder fundamentals (offline) |
 
-```bash
-pip install -r requirements.txt
-cp .env.example .env  # set APP_ENV and FINNHUB_API_KEY for production
-```
-
-Usage examples:
-
-```bash
-# Dev mode (no network): seeds AAA/BBB demo portfolio on first run
-APP_ENV=dev_stage python micro_app.py show
-
-# Production (requires FINNHUB_API_KEY in env or .env)
-APP_ENV=production FINNHUB_API_KEY=... python micro_app.py add AAPL 1 200 --stop 180
-APP_ENV=production python micro_app.py show
-APP_ENV=production python micro_app.py remove AAPL
-```
+Automatic capability detection hides unsupported columns (e.g. Spread, ADV20) when plan lacks bid/ask or candles. Synthetic mode guarantees offline operation and stable test runs.
 
 Caching (production):
-- quotes: quote_{ticker}.json (30s TTL)
-- candles: candles_{ticker}_{start}_{end}.json (1h TTL)
-- profile: profile_{ticker}.json (1d TTL)
-- news/earnings/bid-ask: 1d TTL
-```
+- Quotes: 30s TTL
+- Candles: 1h TTL
+- Profile / News / Earnings / Bid-Ask: 1d TTL
 
 The app will open at `http://localhost:8501` with a clean interface ready for portfolio management.
 
@@ -99,7 +85,7 @@ The app will open at `http://localhost:8501` with a clean interface ready for po
 - **Frontend**: Streamlit web interface with responsive design
 - **Backend**: Python services for trading, market data, and portfolio management  
 - **Database**: SQLite for reliable local data persistence
-- **Market Data**: Yahoo Finance integration for real-time stock prices
+- **Market Data**: Finnhub (production) or deterministic synthetic generator (dev)
 - **Testing**: Comprehensive test suite with ~89% coverage (target ≥80%)
 
 ## 🛠️ Technical Stack
@@ -107,7 +93,7 @@ The app will open at `http://localhost:8501` with a clean interface ready for po
 - **Python 3.13+** - Core application runtime
 - **Streamlit** - Modern web application framework
 - **Pandas + NumPy** - Data manipulation and analysis
-- **yFinance** - Real-time market data integration
+- **finnhub-python** - Market data SDK
 - **SQLite** - Local database for data persistence
 - **Plotly** - Interactive data visualizations
 - **Pytest** - Comprehensive testing framework
@@ -257,8 +243,9 @@ The application uses SQLite for data storage in the `data/` directory. Configura
 
 ## 🚨 Important Notes
 
-- **Live Market Data**: Prices update in real-time during market hours
-- **Data Persistence**: All portfolio data is stored locally and persists between sessions
+- **Live Market Data (production)**: Finnhub quotes subject to plan limits
+- **Synthetic Mode**: Guarantees zero external calls (`APP_ENV=dev_stage`)
+- **Data Persistence**: All portfolio data stored locally (SQLite)
 - **Risk Management**: Always maintain appropriate position sizing and risk controls
 - **Educational Purpose**: This application is for educational and experimental use
 
