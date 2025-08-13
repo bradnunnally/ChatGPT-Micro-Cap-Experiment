@@ -39,6 +39,15 @@ def fmt_percent(val: float) -> str:
         return ""
 
 
+def fmt_percent_2dp(val: float) -> str:
+    """Format percentage with 2 decimal places (no arrows)."""
+    try:
+        val = float(val)
+        return f"{val:.2f}%"
+    except (ValueError, TypeError):
+        return ""
+
+
 def fmt_shares(val: float) -> str:
     """Format share count."""
     try:
@@ -161,6 +170,53 @@ def render_dashboard() -> None:
             }
         )
 
+        # --- Derive replacement metrics for per-position rows (leave underlying Cash/Equity intact) ---
+        try:
+            total_equity_val = float(
+                summary_df.loc[summary_df["Ticker"] == "TOTAL", "Total Equity"].iloc[0]
+            )
+        except Exception:
+            total_equity_val = 0.0
+        try:
+            cash_balance_val = float(
+                summary_df.loc[summary_df["Ticker"] == "TOTAL", "Cash Balance"].iloc[0]
+            )
+        except Exception:
+            cash_balance_val = 0.0
+        denom = total_equity_val if total_equity_val > 0 else None
+
+        # Initialize new columns
+        summary_df["Market/Value Metric"] = ""
+        summary_df["Quality Metric"] = ""
+
+        mask_positions = summary_df["Ticker"] != "TOTAL"
+        if denom:
+            # Position weight (%) of total equity
+            with pd.option_context("mode.use_inf_as_na", True):
+                summary_df.loc[mask_positions, "Market/Value Metric"] = (
+                    (summary_df.loc[mask_positions, "Total Value"].astype(float) / denom) * 100.0
+                ).round(2)
+        else:
+            summary_df.loc[mask_positions, "Market/Value Metric"] = 0.0
+
+        # Quality metric: ROI % ((Current - Cost)/Cost) * 100; guard divide by zero
+        cost = summary_df.loc[mask_positions, "Cost Basis"].replace({0: pd.NA}).astype(float)
+        cur = summary_df.loc[mask_positions, "Current Price"].astype(float)
+        roi = ((cur - cost) / cost * 100.0).round(2)
+        roi = roi.fillna(0.0)
+        summary_df.loc[mask_positions, "Quality Metric"] = roi
+
+        # For TOTAL row provide overall cash % and aggregate ROI as empty (not meaningful)
+        if "TOTAL" in summary_df["Ticker"].values and denom:
+            # Cash weight relative to equity (cash / total_equity *100)
+            try:
+                summary_df.loc[summary_df["Ticker"] == "TOTAL", "Market/Value Metric"] = round(
+                    (cash_balance_val / denom) * 100.0, 2
+                )
+            except Exception:
+                pass
+            summary_df.loc[summary_df["Ticker"] == "TOTAL", "Quality Metric"] = ""
+
         # Cash section (left) + Market status banner (right)
         cash_col, status_col = st.columns([1, 1])
         with cash_col:
@@ -221,6 +277,10 @@ def render_dashboard() -> None:
             st.caption(caption_txt)
 
         port_table = summary_df[summary_df["Ticker"] != "TOTAL"].copy()
+        # Drop legacy cash/equity columns from per-position display
+        for legacy_col in ["Cash Balance", "Total Equity"]:
+            if legacy_col in port_table.columns:
+                port_table.drop(columns=[legacy_col], inplace=True)
         header_cols = st.columns([4, 1, 1])
         with header_cols[0]:
             st.subheader("Current Portfolio")
@@ -294,6 +354,8 @@ def render_dashboard() -> None:
                 "Value",
                 "PnL",
                 "Pct Change",
+                "Market/Value Metric",
+                "Quality Metric",
             ]:
                 if col in port_table:
                     port_table[col] = pd.to_numeric(port_table[col], errors="coerce")
@@ -306,6 +368,10 @@ def render_dashboard() -> None:
                     formatters[c] = fmt_currency
             if "Pct Change" in port_table:
                 formatters["Pct Change"] = fmt_percent
+            if "Market/Value Metric" in port_table:
+                formatters["Market/Value Metric"] = fmt_percent_2dp
+            if "Quality Metric" in port_table:
+                formatters["Quality Metric"] = fmt_percent_2dp
 
             numeric_display = list(formatters.keys())
 
@@ -350,6 +416,12 @@ def render_dashboard() -> None:
                 ),
                 "Price Source": st.column_config.TextColumn(
                     "Price Source", help="Source of current price (Live, Last Close, Manual)"
+                ),
+                "Market/Value Metric": st.column_config.NumberColumn(
+                    "Weight %", help="Position weight as percentage of total equity", format="%.2f%%"
+                ),
+                "Quality Metric": st.column_config.NumberColumn(
+                    "ROI %", help="Return on investment percentage", format="%.2f%%"
                 ),
             }
             st.dataframe(

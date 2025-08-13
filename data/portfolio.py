@@ -54,8 +54,8 @@ def load_portfolio(_depth: int = 0):
             cash_row = None
 
     if portfolio_df.empty and cash_row is None:
-        # Minimal seeding path (delegated) to maintain dev_stage behavior from dev branch
-        if is_dev_stage() and _depth == 0:  # pragma: no cover
+        # Minimal seeding path (delegated) unless explicitly disabled
+        if is_dev_stage() and _depth == 0 and os.getenv("NO_DEV_SEED") != "1":  # pragma: no cover
             try:
                 _seed_dev_stage_portfolio()
             except Exception:  # pragma: no cover
