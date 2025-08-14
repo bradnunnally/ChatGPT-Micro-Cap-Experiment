@@ -1,8 +1,8 @@
 import streamlit as st
 
 from app_settings import settings
-from data.portfolio import load_portfolio
-from data.watchlist import load_watchlist
+from data.portfolio import load_portfolio  # type: ignore
+from data.watchlist import load_watchlist  # type: ignore
 from services.core.sqlite_repository import SqlitePortfolioRepository
 
 

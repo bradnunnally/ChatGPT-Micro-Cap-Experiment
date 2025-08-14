@@ -63,3 +63,6 @@ data/portfolio.json
 
 # Archive folder
 archive/
+
+# === Local snapshot releases ===
+dist/

@@ -273,3 +273,50 @@ Feel free to:
 ---
 
 *Disclaimer: This is an experimental project for educational purposes. Past performance does not guarantee future results. Please invest responsibly.*
+
+## 📦 Local Snapshot Deployment (No Docker)
+
+Create an immutable self-contained copy (code + its own virtualenv) you can launch independently of your dev workspace.
+
+### Create a snapshot
+```
+make freeze VERSION=1.0.0
+```
+This produces: `dist/release-1.0.0/`
+
+Contents:
+- `app.py` and all source files
+- `.venv/` isolated virtual environment
+- `launch.sh` startup script
+- `VERSION` file containing the version string
+
+### Launch the snapshot
+```
+./dist/release-1.0.0/launch.sh
+```
+The script sets `APP_ENV=production` by default (override when calling: `APP_ENV=dev_stage ./dist/release-1.0.0/launch.sh`).
+
+### Create new versions
+```
+make freeze VERSION=1.0.1
+make freeze VERSION=1.0.2
+```
+Each run creates a fresh directory; older ones remain untouched for rollback/comparison.
+
+### Optional: Compress and archive
+```
+tar -czf portfolio_release_v1.0.0.tgz -C dist release-1.0.0
+```
+
+### Clean up old snapshots
+```
+rm -rf dist/release-1.0.0
+```
+
+### Why this approach?
+- Zero external dependencies (no Docker)
+- Stable snapshot insulated from active development
+- Simple rollback (keep previous folder)
+- Fast rebuild time (rsync + pip install)
+
+If you need a single-file binary later, you can explore PyInstaller—see project notes or ask for a recipe.
