@@ -20,6 +20,10 @@ test:
 run:
 	. .venv/bin/activate && python -m streamlit run app.py
 
+# Development run on alternate port to avoid snapshot (8501) conflict
+run-dev:
+	. .venv/bin/activate && STREAMLIT_SERVER_PORT=8601 python -m streamlit run app.py
+
 migrate:
 	. .venv/bin/activate && python apply_migrations.py
 

@@ -1,5 +1,6 @@
 # === Python ===
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *.pyo
 *.pyd
@@ -10,6 +11,14 @@ venv/
 .mypy_cache/
 .pyright/
 .pylance/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+*.egg-info/
+build/
+site/
 
 # === VS Code ===
 .vscode/
@@ -55,9 +64,15 @@ Documents/
 # App caches and local data
 data/cache/
 data/portfolio.json
+data/cache/**
+.streamlit/secrets.toml
 
 # === Project Generated Files ===
 *.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 *.json
 *.csv
 
@@ -66,3 +81,4 @@ archive/
 
 # === Local snapshot releases ===
 dist/
+MagicMock/
