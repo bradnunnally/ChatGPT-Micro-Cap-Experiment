@@ -8,10 +8,11 @@ import streamlit as st
 
 from app_settings import settings
 from components.nav import navbar
-from services.risk import compute_risk_block
+from services.risk import compute_risk_block, compute_rolling_betas, drawdown_table
 from services.benchmark import get_benchmark_series, BENCHMARK_SYMBOL_DEFAULT
 from services.risk_free import get_risk_free_rate
 from services.money import format_money
+from services.fundamentals import batch_get_fundamentals
 
 st.set_page_config(page_title="Performance", layout="wide", initial_sidebar_state="collapsed")
 
@@ -178,7 +179,7 @@ def calculate_kpis(hist_filtered: pd.DataFrame) -> dict:
     }
 
 
-def display_kpis(kpis: dict, risk_metrics, col_meta) -> None:
+def display_kpis(kpis: dict, risk_metrics, col_meta, hist_filtered: pd.DataFrame) -> None:
     """Display KPIs (performance & risk) in the metadata column."""
     col_meta.subheader("Performance Summary")
 
@@ -204,6 +205,28 @@ def display_kpis(kpis: dict, risk_metrics, col_meta) -> None:
 
     for label, value in perf_metrics + risk_section:
         col_meta.metric(label, value)
+
+    # Fundamentals expander (lazy load)
+    with col_meta.expander("Fundamentals (cached daily)"):
+        tickers = [t for t in hist_filtered["ticker"].unique() if t != "TOTAL"]
+        if not tickers:
+            st.caption("No ticker fundamentals to display.")
+        else:
+            force = st.checkbox("Force refresh fundamentals", value=False, key="force_funds")
+            funds = batch_get_fundamentals(tickers) if not force else [
+                # per-ticker refresh path
+                __import__('services.fundamentals', fromlist=['get_fundamentals']).get_fundamentals(t, force_refresh=True)  # type: ignore
+                for t in tickers
+            ]
+            rows = []
+            for f in funds:
+                rows.append({
+                    "Ticker": f.ticker,
+                    "Cash/Share": f"{f.cash_per_share:.2f}" if f.cash_per_share is not None else "-",
+                    "Book/Share": f"{f.book_value_per_share:.2f}" if f.book_value_per_share is not None else "-",
+                    "Dividend Yield (%)": f"{f.dividend_yield_pct:.2f}" if f.dividend_yield_pct is not None else "-",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
 
 def highlight_stop(row: pd.Series) -> list[str]:
@@ -265,7 +288,49 @@ def main() -> None:
     with col_meta:
         kpis = calculate_kpis(hist_filtered)
         risk_metrics = compute_risk_block(hist_filtered)
-        display_kpis(kpis, risk_metrics, col_meta)
+    display_kpis(kpis, risk_metrics, col_meta, hist_filtered)
+
+    # Rolling Beta Visualization (portfolio TOTAL vs benchmark)
+    with st.expander("Rolling Beta (vs Benchmark)"):
+        total_rows = hist_filtered[hist_filtered["ticker"] == "TOTAL"].sort_values("date")
+        bench_series = get_benchmark_series(BENCHMARK_SYMBOL_DEFAULT)
+        if total_rows.empty or not bench_series:
+            st.caption("Insufficient data for rolling beta.")
+        else:
+            bench_df = pd.DataFrame(bench_series)
+            bench_df["date"] = pd.to_datetime(bench_df["date"])  # ensure datetime
+            merged = total_rows[["date", "total_equity"]].merge(bench_df, on="date", how="inner")
+            merged = merged.sort_values("date")
+            if merged.shape[0] < 40:  # require minimum data for 30d window + margin
+                st.caption("Need more overlapping history to plot rolling betas.")
+            else:
+                betas = compute_rolling_betas(merged["total_equity"], merged["close"], windows=[30,60,90])
+                if not betas:
+                    st.caption("No beta series produced.")
+                else:
+                    fig_b = go.Figure()
+                    palette = {30: "#1f77b4", 60: "#ff7f0e", 90: "#2ca02c"}
+                    for w, series in betas.items():
+                        fig_b.add_trace(go.Scatter(x=series.index, y=series.values, name=f"{w}d" , line=dict(color=palette.get(w, None))))
+                    fig_b.add_hline(y=1.0, line=dict(color="#888", width=1, dash="dash"))
+                    fig_b.update_layout(height=300, title="Rolling Beta", yaxis_title="Beta", xaxis_title="Date")
+                    st.plotly_chart(fig_b, use_container_width=True)
+
+    # Drawdown Table
+    with st.expander("Top Drawdowns"):
+        total_rows = hist_filtered[hist_filtered["ticker"] == "TOTAL"].sort_values("date")
+        if total_rows.empty:
+            st.caption("No equity data.")
+        else:
+            eq = pd.to_numeric(total_rows["total_equity"], errors="coerce").dropna()
+            dd_df = drawdown_table(eq, top_n=5)
+            if dd_df.empty:
+                st.caption("No drawdowns detected.")
+            else:
+                fmt = dd_df.copy()
+                if "Depth (%)" in fmt.columns:
+                    fmt["Depth (%)"] = fmt["Depth (%)"].map(lambda v: f"{v:.2f}%")
+                st.dataframe(fmt, use_container_width=True)
 
     # Benchmark + risk-free details (after KPI display)
     with st.expander("Benchmark & Risk-Free Details"):
