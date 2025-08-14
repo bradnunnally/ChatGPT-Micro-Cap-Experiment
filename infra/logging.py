@@ -20,6 +20,29 @@ import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Dict, Optional
+from functools import wraps
+
+def time_call(name: str | None = None):  # pragma: no cover - thin decorator wrapper
+    """Decorator to log duration (ms) of a function execution.
+
+    Example:
+        @time_call("fetch_quotes")
+        def fetch(): ...
+    """
+    def deco(fn):
+        label = name or fn.__name__
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            start = time.time()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                dur_ms = int((time.time() - start) * 1000)
+                get_logger(fn.__module__).info(
+                    "timing", extra={"event": "timing", "metric": label, "ms": dur_ms}
+                )
+        return wrapper
+    return deco
 
 _correlation_id: ContextVar[str] = ContextVar("correlation_id", default="")
 
@@ -67,9 +90,14 @@ class JsonFormatter(logging.Formatter):
 
         # Merge any structured extras (exclude standard attributes)
         standard = set(vars(logging.LogRecord("x", 0, "x", 0, "", (), None)).keys())
+        sensitive_keys = {"api_key", "token", "auth", "secret", "password"}
         for k, v in record.__dict__.items():
             if k not in standard and k not in payload and k != "args":
-                payload[k] = v
+                # Redact obvious sensitive keys
+                if any(sk in k.lower() for sk in sensitive_keys):
+                    payload[k] = "[REDACTED]"
+                else:
+                    payload[k] = v
 
         # If exception info present, include concise info
         if record.exc_info:

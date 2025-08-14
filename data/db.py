@@ -1,4 +1,5 @@
 import sqlite3
+import atexit
 import threading
 import weakref
 from pathlib import Path
@@ -55,7 +56,10 @@ SCHEMA_STATEMENTS = [
         pnl REAL,
         action TEXT,
         cash_balance REAL,
-        total_equity REAL
+    total_equity REAL,
+    pnl_price REAL,
+    pnl_position REAL,
+    pnl_total_attr REAL
     );
     """,
     """
@@ -74,30 +78,38 @@ SCHEMA = "\n".join(stmt.strip() for stmt in SCHEMA_STATEMENTS)
 
 
 def get_connection(reuse: bool = False) -> Any:
-    """Return a SQLite3 connection or a proxy that supports context management when mocked.
+    """Return a SQLite connection with sane pragmas.
 
-    - Returns a real sqlite3.Connection in normal operation (supports `with`).
-    - If sqlite3.connect is patched to return a bare Mock without __enter__/__exit__,
-      return a lightweight proxy that provides context manager behavior and proxies attributes.
+    Features:
+    - Ensures data directory exists.
+    - Optional thread-local reuse to reduce connection churn in hot paths.
+    - Attaches a weakref finalizer to close uncollected connections (mitigates ResourceWarnings).
+    - Applies WAL + busy timeout pragmas best-effort.
+    - Wraps bare mocks (without context manager methods) in a lightweight proxy so tests
+      using monkeypatched sqlite3.connect still work with `with get_connection():`.
     """
-    # Ensure the data directory exists
     Path(settings.paths.data_dir).mkdir(parents=True, exist_ok=True)
     if reuse:
         cached = getattr(_thread_local, "conn", None)
         if cached is not None:
             return cached
     raw = sqlite3.connect(str(DB_FILE))
-    # Ensure connection is closed even if caller forgets (guards ResourceWarning in tests)
-    def _safe_close(c):
+
+    def _safe_close(c):  # pragma: no cover - defensive close
         try:
+            if getattr(c, "in_transaction", False):  # commit if open txn
+                try:
+                    c.commit()
+                except Exception:
+                    pass
             c.close()
         except Exception:
             pass
+
     try:
         weakref.finalize(raw, _safe_close, raw)
-    except Exception:  # pragma: no cover - weakref issues shouldn't break runtime
+    except Exception:  # pragma: no cover
         pass
-    # Enable WAL and adjust sync for better concurrency and durability trade-offs
     try:
         raw.execute("PRAGMA journal_mode=WAL;")
         raw.execute("PRAGMA synchronous=NORMAL;")
@@ -105,27 +117,22 @@ def get_connection(reuse: bool = False) -> Any:
     except Exception:
         pass
 
-    # If the returned object already supports context management (real connection or test-provided),
-    # return it directly.
     if hasattr(raw, "__enter__") and hasattr(raw, "__exit__"):
         if reuse:
-            _thread_local.conn = raw  # cache for subsequent calls in same thread
+            _thread_local.conn = raw
         return raw
 
     class _ConnProxy:
         def __init__(self, underlying):
             self._u = underlying
-
         def __enter__(self):
             return self._u
-
         def __exit__(self, exc_type, exc, tb):
             try:
                 self._u.close()
             except Exception:
                 pass
             return False
-
         def __getattr__(self, name):
             return getattr(self._u, name)
 
@@ -133,6 +140,29 @@ def get_connection(reuse: bool = False) -> Any:
     if reuse:
         _thread_local.conn = proxy
     return proxy
+
+
+def _close_thread_local_connection() -> None:  # pragma: no cover - best effort cleanup
+    conn = getattr(_thread_local, "conn", None)
+    if conn is not None:
+        try:
+            if getattr(conn, "in_transaction", False):
+                try:
+                    conn.commit()
+                except Exception:
+                    pass
+            conn.close()
+        except Exception:
+            pass
+        finally:
+            try:
+                delattr(_thread_local, "conn")
+            except Exception:
+                pass
+
+
+# Register a process-exit cleanup to silence ResourceWarning for lingering thread-local
+atexit.register(_close_thread_local_connection)
 
 
 def init_db() -> None:

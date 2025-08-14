@@ -184,6 +184,9 @@ class TestSavePortfolioSnapshot:
         assert total_row["pnl"] == 2000.0  # 1000 + 1000
         assert total_row["cash_balance"] == 1000.0
         assert total_row["total_equity"] == 33000.0  # 32000 + 1000
+        # Attribution columns should exist even if zero for this synthetic scenario
+        for col in ["pnl_price", "pnl_position", "pnl_total_attr"]:
+            assert col in result.columns
 
     @patch("data.portfolio.get_connection")
     @patch("data.portfolio.init_db")

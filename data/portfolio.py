@@ -1,13 +1,16 @@
 import pandas as pd
+import warnings
 
 from config import COL_COST, COL_PRICE, COL_SHARES, COL_STOP, COL_TICKER, TODAY
 from config.providers import is_dev_stage
 from data.db import get_connection, init_db
-from portfolio import ensure_schema
+from portfolio import ensure_schema, SCHEMA_VERSION
+from app_settings import settings
 
 from services.core.portfolio_service import compute_snapshot as _compute_snapshot
 from services.market import fetch_prices
 import os
+from services.risk import attribute_pnl
 
 
 class PortfolioResult(pd.DataFrame):
@@ -39,7 +42,14 @@ def load_portfolio(_depth: int = 0):
     init_db()
     with get_connection() as conn:
         try:
-            portfolio_df = pd.read_sql_query("SELECT * FROM portfolio", conn)
+            # Retain pandas read_sql_query to satisfy tests that monkeypatch it; suppress its warning.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="pandas only supports SQLAlchemy connectable",
+                    category=UserWarning,
+                )
+                portfolio_df = pd.read_sql_query("SELECT * FROM portfolio", conn)
         except Exception:
             # Fallback for tests that provide a mocked connection
             rows = conn.execute(
@@ -55,7 +65,7 @@ def load_portfolio(_depth: int = 0):
 
     if portfolio_df.empty and cash_row is None:
         # Minimal seeding path (delegated) unless explicitly disabled
-        if is_dev_stage() and _depth == 0 and os.getenv("NO_DEV_SEED") != "1":  # pragma: no cover
+        if is_dev_stage() and _depth == 0 and not getattr(settings, "no_dev_seed", False):  # pragma: no cover
             try:
                 _seed_dev_stage_portfolio()
             except Exception:  # pragma: no cover
@@ -137,10 +147,10 @@ def _seed_dev_stage_portfolio() -> None:
             # Seed starting cash
             conn.execute("INSERT OR REPLACE INTO cash (id, balance) VALUES (0, ?)", (10_000.00,))
             # Generate deterministic multi-day history inline for tests
-            from datetime import datetime, timedelta
+            from datetime import datetime, timedelta, UTC
             total_equity_static = 10_000.00 + sum(x[1] * x[3] for x in seed_rows)
             for days_ago in range(20, 0, -1):
-                date_str = (datetime.utcnow() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+                date_str = (datetime.now(UTC) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
                 for r in seed_rows:
                     shares = r[1]
                     buy_price = r[3]
@@ -270,6 +280,7 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
     # Try bulk fetch first
     data = fetch_prices(tickers)
     prices: dict[str, float] = {t: 0.0 for t in tickers}
+    price_sources: dict[str, str] = {t: "INIT" for t in tickers}
     
     if not data.empty:
         if isinstance(data.columns, pd.MultiIndex):
@@ -278,14 +289,17 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
                 val = close.get(t)
                 if val is not None and not pd.isna(val):
                     prices[t] = float(val)
+                    price_sources[t] = "BULK"
         elif set(["ticker", "current_price"]).issubset(set(data.columns)):
             for _, r in data.iterrows():
                 cur = r.get("current_price") if hasattr(r, "get") else r["current_price"]
                 prices[str(r["ticker"])] = float(cur) if pd.notna(cur) else 0.0
+                price_sources[str(r["ticker"])] = "BULK"
         else:
             val = data.get("Close", pd.Series([None])).iloc[-1]
             if tickers and not pd.isna(val):
                 prices[tickers[0]] = float(val)
+                price_sources[tickers[0]] = "BULK"
     
     # If bulk fetch failed or returned empty prices, try individual fallback
     # Only fallback to individual lookups if bulk fetch returned data but yielded zero prices.
@@ -295,27 +309,37 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
         from services.market import get_current_price
         from services.manual_pricing import get_manual_price
         import logging
-        
+
         logger = logging.getLogger(__name__)
-        logger.info("Bulk price fetch failed, attempting individual price lookups with manual fallback")
-        
+        logger.info(
+            "Bulk price fetch failed, attempting individual price lookups with manual fallback"
+        )
+
         for ticker in tickers:
-            # First try manual pricing override
+            # Manual override takes precedence
             manual_price = get_manual_price(ticker)
             if manual_price is not None:
                 prices[ticker] = float(manual_price)
+                price_sources[ticker] = "MANUAL"
                 logger.info(f"Using manual price for {ticker}: ${manual_price}")
                 continue
-            
-            # If no manual price, try API
+            # API individual lookup
             try:
                 individual_price = get_current_price(ticker)
                 if individual_price is not None and individual_price > 0:
                     prices[ticker] = float(individual_price)
-                    logger.info(f"Successfully fetched individual price for {ticker}: ${individual_price}")
+                    price_sources[ticker] = "API"
+                    logger.info(
+                        f"Successfully fetched individual price for {ticker}: ${individual_price}"
+                    )
             except Exception as e:
                 logger.warning(f"Individual price fetch failed for {ticker}: {e}")
                 # Keep the 0.0 default
+
+        # Mark remaining zero prices explicitly
+        for t in tickers:
+            if prices.get(t, 0.0) == 0.0 and price_sources.get(t) in {"INIT", "BULK"}:
+                price_sources[t] = "ZERO"
 
     df = _compute_snapshot(
         portfolio_df.rename(
@@ -330,42 +354,92 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
         prices,
         cash,
         TODAY,
+        price_sources=price_sources,
     )
 
+    # --- PnL Attribution (price vs position) ---
+    try:
+        # Load previous day's snapshot positions (excluding TOTAL) using cost_basis to derive avg buy price
+        from datetime import datetime, timedelta
+        prev_day = (datetime.strptime(TODAY, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+        with get_connection() as conn:
+            prev_rows = conn.execute(
+                "SELECT ticker, shares, cost_basis FROM portfolio_history WHERE date = ? AND ticker != 'TOTAL'",
+                (prev_day,),
+            ).fetchall()
+        if prev_rows:
+            prev_df = pd.DataFrame(prev_rows, columns=["ticker", "shares", "cost_basis"]).copy()
+            prev_df["buy_price"] = prev_df.apply(
+                lambda r: (float(r["cost_basis"]) / float(r["shares"])) if float(r["shares"]) > 0 else 0.0,
+                axis=1,
+            )
+            # Current positions from freshly built df (Ticker/Shares/Cost Basis)
+            cur_pos = df[df["Ticker"] != "TOTAL"][["Ticker", "Shares", "Cost Basis"]].copy()
+            cur_pos.rename(columns={"Ticker": "ticker", "Shares": "shares", "Cost Basis": "cost_basis"}, inplace=True)
+            cur_pos["buy_price"] = cur_pos.apply(
+                lambda r: (float(r["cost_basis"]) / float(r["shares"])) if float(r["shares"]) > 0 else 0.0,
+                axis=1,
+            )
+            cur_attr = cur_pos[["ticker", "shares", "buy_price"]]
+            prev_attr = prev_df[["ticker", "shares", "buy_price"]]
+            attr_df = attribute_pnl(cur_attr, prev_attr)
+            for col in ["pnl_price", "pnl_position", "pnl_total_attr"]:
+                mapping = {r.ticker: r[col] for _, r in attr_df.iterrows()}
+                df[col] = df["Ticker"].map(mapping).fillna(0.0)
+        else:
+            for col in ["pnl_price", "pnl_position", "pnl_total_attr"]:
+                df[col] = 0.0
+    except Exception:
+        for col in ["pnl_price", "pnl_position", "pnl_total_attr"]:
+            if col not in df.columns:
+                df[col] = 0.0
+
     # Create a lower-case version for DB insertion and returning to UI
+    rename_map = {
+        "Date": "date",
+        "Ticker": "ticker",
+        "Shares": "shares",
+        "Cost Basis": "cost_basis",
+        "Stop Loss": "stop_loss",
+        "Current Price": "current_price",
+        "Total Value": "total_value",
+        "PnL": "pnl",
+        "Action": "action",
+        "Cash Balance": "cash_balance",
+        "Total Equity": "total_equity",
+    }
+    # Optional attribution columns (will be added by attribution step if present)
+    if "pnl_price" in df.columns:
+        rename_map["pnl_price"] = "pnl_price"
+    if "pnl_position" in df.columns:
+        rename_map["pnl_position"] = "pnl_position"
+    if "pnl_total_attr" in df.columns:
+        rename_map["pnl_total_attr"] = "pnl_total_attr"
+    if "Price Source" in df.columns:
+        rename_map["Price Source"] = "price_source"
     df = df.rename(
         columns={
-            "Date": "date",
-            "Ticker": "ticker",
-            "Shares": "shares",
-            "Cost Basis": "cost_basis",
-            "Stop Loss": "stop_loss",
-            "Current Price": "current_price",
-            "Total Value": "total_value",
-            "PnL": "pnl",
-            "Action": "action",
-            "Price Source": "price_source",
-            "Cash Balance": "cash_balance",
-            "Total Equity": "total_equity",
+            **rename_map
         }
     )
 
     # Prepare DB-aligned DataFrame (subset to schema columns only)
-    df_db = df[
-        [
-            "date",
-            "ticker",
-            "shares",
-            "cost_basis",
-            "stop_loss",
-            "current_price",
-            "total_value",
-            "pnl",
-            "action",
-            "cash_balance",
-            "total_equity",
-        ]
+    # Columns defined by existing portfolio_history schema (don't add new columns without migration)
+    base_cols = [
+        "date",
+        "ticker",
+        "shares",
+        "cost_basis",
+        "stop_loss",
+        "current_price",
+        "total_value",
+        "pnl",
+        "action",
+        "cash_balance",
+        "total_equity",
     ]
+    # Drop any non-schema analytic columns (e.g., price_source, pnl attribution) for persistence
+    df_db = df[base_cols].copy()
 
     init_db()
     with get_connection() as conn:
@@ -401,14 +475,20 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
         # Store daily snapshot for the day using pandas to_sql so tests can patch it
         conn.execute("DELETE FROM portfolio_history WHERE date = ?", (TODAY,))
         try:
-            df.to_sql("portfolio_history", conn, if_exists="append", index=False)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="pandas only supports SQLAlchemy connectable",
+                    category=UserWarning,
+                )
+                df_db.to_sql("portfolio_history", conn, if_exists="append", index=False)
         except Exception:
             # Fallback to manual inserts when working with mocked connections
             insert_hist = (
                 "INSERT INTO portfolio_history (date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             )
-            for _, r in df.iterrows():
+            for _, r in df_db.iterrows():
                 conn.execute(
                     insert_hist,
                     (
@@ -425,6 +505,12 @@ def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataF
                         float(r["total_equity"]) if r["total_equity"] != "" else 0.0,
                     ),
                 )
+
+        # Ensure all writes are persisted (sqlite does not autocommit by default)
+        try:
+            conn.commit()
+        except Exception:
+            pass
 
     # Return the UI-friendly DataFrame (lowercase keys plus price_source)
     return df

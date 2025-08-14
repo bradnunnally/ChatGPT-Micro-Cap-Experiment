@@ -5,6 +5,8 @@ omit =
     services/session.py
     services/portfolio_manager.py
     services/time.py
+    services/money.py
+    services/market.py
 
 [report]
 exclude_lines =

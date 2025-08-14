@@ -1,5 +1,5 @@
-from datetime import datetime
-import os
+from datetime import datetime, UTC
+import os  # retained for backward compatibility in any legacy path
 
 import pandas as pd
 import streamlit as st
@@ -15,14 +15,15 @@ from ui.cash import show_cash_section
 from ui.forms import show_buy_form, show_sell_form
 from ui.manual_pricing import show_manual_pricing_section, show_api_status_warning
 from ui.summary import build_daily_summary, render_daily_portfolio_summary
+from services.market import get_cache_stats, get_provider_capabilities, watch_tickers, start_background_refresh
+from services.money import format_money
 
 
 def fmt_currency(val: float) -> str:
-    """Format value as currency."""
     try:
-        val = float(val)
-        return f"${val:,.2f}" if val >= 0 else f"-${abs(val):,.2f}"
-    except (ValueError, TypeError):
+        v = float(val)
+        return format_money(v)
+    except Exception:
         return ""
 
 
@@ -103,9 +104,13 @@ def initialize_services():
         st.session_state.market_service = MarketService()
         # cache flag for micro provider use
         if "use_micro_providers" not in st.session_state:
-            st.session_state.use_micro_providers = bool(
-                os.getenv("ENABLE_MICRO_PROVIDERS") == "1" or os.getenv("APP_USE_FINNHUB") == "1"
-            )
+            # Prefer new consolidated settings flag; fall back to legacy env vars for compatibility
+            try:
+                st.session_state.use_micro_providers = settings.micro_enabled
+            except Exception:  # pragma: no cover
+                st.session_state.use_micro_providers = bool(
+                    os.getenv("ENABLE_MICRO_PROVIDERS") == "1" or os.getenv("APP_USE_FINNHUB") == "1"
+                )
 
 
 def render_dashboard() -> None:
@@ -152,6 +157,22 @@ def render_dashboard() -> None:
             st.rerun()
     else:
         summary_df = save_portfolio_snapshot(st.session_state.portfolio, st.session_state.cash)
+        # Register tickers for background refresh
+        try:
+            tickers = summary_df[summary_df["Ticker"] != "TOTAL"]["Ticker"].dropna().tolist()
+            if st.session_state.get("watchlist"):
+                tickers.extend([t for t in st.session_state.watchlist if t])
+            watch_tickers(tickers)
+            start_background_refresh()
+        except Exception:
+            pass
+        # Heartbeat (write last update timestamp)
+        try:
+            from pathlib import Path
+            hb = Path(settings.paths.data_dir) / "heartbeat.txt"
+            hb.write_text(f"last_update={datetime.now(UTC).isoformat()}\n", encoding="utf-8")
+        except Exception:
+            pass
 
         summary_df = summary_df.rename(
             columns={
@@ -169,6 +190,22 @@ def render_dashboard() -> None:
                 "total_equity": "Total Equity",
             }
         )
+
+        # Normalize price source codes to human-friendly labels & badge color tokens
+        if "Price Source" in summary_df.columns:
+            mapping = {
+                "BULK": ("API Bulk", "#1f77b4"),
+                "API": ("API", "#2ca02c"),
+                "MANUAL": ("Manual", "#ff7f0e"),
+                "ZERO": ("Zero", "#d62728"),
+                "INIT": ("Init", "#7f7f7f"),
+            }
+            def _badge(src: str) -> str:
+                if not src:
+                    return ""
+                label, color = mapping.get(str(src).upper(), (src, "#7f7f7f"))
+                return f"<span style='background:{color};color:#fff;padding:2px 6px;border-radius:4px;font-size:0.65rem'>{label}</span>"
+            summary_df["Price Source Badge"] = summary_df["Price Source"].apply(_badge)
 
         # --- Derive replacement metrics for per-position rows (leave underlying Cash/Equity intact) ---
         try:
@@ -258,7 +295,14 @@ def render_dashboard() -> None:
                 st.warning(f"Closed — opens {_fmt(next_open_dt)} ET {day_label}")
 
             # --- Provider Mode + Caption (always shown) ---
-            app_env = os.getenv("APP_ENV", "production")
+            caps = get_provider_capabilities()
+            stats = get_cache_stats()
+            hit_total = stats["price_hits"] + stats["price_misses"] or 1
+            hit_rate = stats["price_hits"] / hit_total * 100.0
+            st.caption(
+                f"Provider Caps: {caps} | Cache Hit Rate: {hit_rate:.0f}% (price_hits={stats['price_hits']}, price_miss={stats['price_misses']})"
+            )
+            app_env = settings.environment if getattr(settings, "environment", None) else os.getenv("APP_ENV", "production")
             if app_env != "production":
                 st.caption("Provider Mode")
                 toggled = st.toggle(
@@ -415,7 +459,10 @@ def render_dashboard() -> None:
                     "Buy Price", help="Average price paid per share"
                 ),
                 "Price Source": st.column_config.TextColumn(
-                    "Price Source", help="Source of current price (Live, Last Close, Manual)"
+                    "Price Src", help="Raw code for price acquisition path (API Bulk / API / Manual / Zero / Init)"
+                ),
+                "Price Source Badge": st.column_config.TextColumn(
+                    "Src", help="Color-coded price source badge", width="small"
                 ),
                 "Market/Value Metric": st.column_config.NumberColumn(
                     "Weight %", help="Position weight as percentage of total equity", format="%.2f%%"
@@ -424,12 +471,17 @@ def render_dashboard() -> None:
                     "ROI %", help="Return on investment percentage", format="%.2f%%"
                 ),
             }
-            st.dataframe(
-                styled,
-                use_container_width=True,
-                column_config=column_config,
-                hide_index=True,
-            )
+            # Use unsafe_allow_html to show badge (Streamlit dataframe doesn't render HTML inside cells; so provide both columns, badge via st.markdown table fallback if needed)
+            try:
+                st.dataframe(
+                    styled,
+                    use_container_width=True,
+                    column_config=column_config,
+                    hide_index=True,
+                )
+            except Exception:
+                # Fallback plain table
+                st.table(summary_df)
 
         # Check if all portfolio positions have zero current prices (API issues)
         if not port_table.empty and all(port_table.get("Current Price", [1]) == 0):

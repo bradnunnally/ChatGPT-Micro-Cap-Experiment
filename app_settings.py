@@ -41,6 +41,22 @@ class Settings(BaseSettings):
     # Misc
     cache_ttl_seconds: int = Field(default=300, ge=0)
     environment: str = Field(default="development")
+    finnhub_api_key: str | None = Field(default=None, validation_alias="FINNHUB_API_KEY")
+    use_micro_providers: bool | None = Field(
+        default=None,
+        description="Override auto provider selection. When True forces use of micro providers if available.",
+        validation_alias="ENABLE_MICRO_PROVIDERS",
+    )
+    app_use_finnhub: bool | None = Field(
+        default=None,
+        description="Legacy flag to explicitly enable Finnhub path.",
+        validation_alias="APP_USE_FINNHUB",
+    )
+    no_dev_seed: bool = Field(
+        default=False,
+        description="Disable automatic dev_stage seeding of synthetic portfolio.",
+        validation_alias="NO_DEV_SEED",
+    )
     # Trading calendar
     trading_holidays: List[str] = Field(
         default_factory=list, description="List of YYYY-MM-DD holiday dates when market is closed"
@@ -54,6 +70,15 @@ class Settings(BaseSettings):
         base_dir: Path = info.data.get("base_dir")  # type: ignore[assignment]
         return _to_path(v, base=base_dir)
 
+    @field_validator("finnhub_api_key")
+    @classmethod
+    def validate_key(cls, v: str | None) -> str | None:  # pragma: no cover - simple guard
+        if v is None:
+            return v
+        if len(v.strip()) < 8:
+            raise ValueError("FINNHUB_API_KEY appears too short")
+        return v.strip()
+
     @property
     def paths(self) -> Paths:
         return Paths(
@@ -64,6 +89,27 @@ class Settings(BaseSettings):
             trade_log_csv=Path(self.trade_log_csv),
             watchlist_file=Path(self.watchlist_file),
         )
+
+    # Derived convenience flags (not environment backed directly)
+    @property
+    def micro_enabled(self) -> bool:
+        """Return True if micro providers should be used based on explicit flags + environment.
+
+        Order of precedence:
+        1. Explicit use_micro_providers env var (ENABLE_MICRO_PROVIDERS)
+        2. Legacy app_use_finnhub (APP_USE_FINNHUB)
+        3. FINNHUB key present & environment == production
+        4. dev_stage always allowed (synthetic provider)
+        """
+        if self.use_micro_providers is not None:
+            return bool(self.use_micro_providers)
+        if self.app_use_finnhub is not None:
+            return bool(self.app_use_finnhub)
+        if self.environment == "production" and self.finnhub_api_key:
+            return True
+        if self.environment == "dev_stage":
+            return True
+        return False
 
 
 settings = Settings()

@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from typing import Dict, Optional
-
 import pandas as pd
 
 
@@ -34,12 +33,10 @@ class PortfolioService:
     def get_metrics(self) -> PortfolioMetrics:
         if not self._positions:
             return PortfolioMetrics(0, 0, 0, 0)
-
         total_value = sum(p.shares * p.price for p in self._positions.values())
         total_cost = sum(p.cost_basis for p in self._positions.values())
         total_gain = total_value - total_cost
         total_return = (total_gain / total_cost) if total_cost > 0 else 0
-
         return PortfolioMetrics(
             total_value=total_value,
             total_gain=total_gain,
@@ -106,23 +103,23 @@ def apply_buy(
     add_cost = float(price) * float(shares)
     mask = df["ticker"].str.upper() == t
     if not mask.any():
-        df = pd.concat(
+        # Build the new row frame separately; avoid concatenating if original df empty to prevent
+        # future dtype inference changes warning (pandas concat with empty/all-NA frames).
+        new_row = pd.DataFrame(
             [
-                df,
-                pd.DataFrame(
-                    [
-                        {
-                            "ticker": t,
-                            "shares": float(shares),
-                            "stop_loss": float(stop_loss) if stop_loss is not None else 0.0,
-                            "buy_price": float(price),
-                            "cost_basis": add_cost,
-                        }
-                    ]
-                ),
-            ],
-            ignore_index=True,
+                {
+                    "ticker": t,
+                    "shares": float(shares),
+                    "stop_loss": float(stop_loss) if stop_loss is not None else 0.0,
+                    "buy_price": float(price),
+                    "cost_basis": add_cost,
+                }
+            ]
         )
+        if df.empty:
+            df = new_row.reset_index(drop=True)
+        else:
+            df = pd.concat([df, new_row], ignore_index=True)
     else:
         idx = df[mask].index[0]
         current_shares = float(df.at[idx, "shares"]) if pd.notna(df.at[idx, "shares"]) else 0.0
@@ -189,6 +186,7 @@ def compute_snapshot(
     prices: dict[str, float],
     cash: float,
     date: str,
+    price_sources: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """Return a snapshot DataFrame with per-position and TOTAL rows.
 
@@ -204,6 +202,8 @@ def compute_snapshot(
     total_value = 0.0
     total_pnl = 0.0
 
+    ps = price_sources or {}
+    include_price_source = bool(price_sources)
     for _, r in df.iterrows():
         t = str(r["ticker"]).strip().upper()
         sh = float(r["shares"]) if pd.notna(r["shares"]) else 0.0
@@ -215,37 +215,39 @@ def compute_snapshot(
         total_value += value
         total_pnl += pnl
 
-        rows.append(
-            {
-                "Date": date,
-                "Ticker": t,
-                "Shares": sh,
-                "Cost Basis": buy,
-                "Stop Loss": stop,
-                "Current Price": cur,
-                "Total Value": value,
-                "PnL": pnl,
-                "Action": "HOLD",
-                "Cash Balance": "",
-                "Total Equity": "",
-            }
-        )
-
-    rows.append(
-        {
+        row = {
             "Date": date,
-            "Ticker": "TOTAL",
-            "Shares": "",
-            "Cost Basis": "",
-            "Stop Loss": "",
-            "Current Price": "",
-            "Total Value": round(total_value, 2),
-            "PnL": round(total_pnl, 2),
-            "Action": "",
-            "Cash Balance": round(float(cash), 2),
-            "Total Equity": round(total_value + float(cash), 2),
+            "Ticker": t,
+            "Shares": sh,
+            "Cost Basis": buy,
+            "Stop Loss": stop,
+            "Current Price": cur,
+            "Total Value": value,
+            "PnL": pnl,
+            "Action": "HOLD",
+            "Cash Balance": "",
+            "Total Equity": "",
         }
-    )
+        if include_price_source:
+            row["Price Source"] = ps.get(t, "N/A")
+        rows.append(row)
+
+    total_row = {
+        "Date": date,
+        "Ticker": "TOTAL",
+        "Shares": "",
+        "Cost Basis": "",
+        "Stop Loss": "",
+        "Current Price": "",
+        "Total Value": round(total_value, 2),
+        "PnL": round(total_pnl, 2),
+        "Action": "",
+        "Cash Balance": round(float(cash), 2),
+        "Total Equity": round(total_value + float(cash), 2),
+    }
+    if include_price_source:
+        total_row["Price Source"] = ""
+    rows.append(total_row)
 
     out = pd.DataFrame(rows)
     return out

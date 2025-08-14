@@ -39,11 +39,24 @@ restore:
 audit:
 	python3 -m venv .venv || true
 	. .venv/bin/activate && python -m pip install -U pip
-	. .venv/bin/activate && pip install -q ruff vulture pycln deptry
+	. .venv/bin/activate && pip install -q ruff vulture pycln deptry detect-secrets
 	. .venv/bin/activate && python scripts/audit_unused_modules.py
 	. .venv/bin/activate && ruff . --select F401,F841,ERA || true
 	. .venv/bin/activate && vulture . --min-confidence 80 || true
 	. .venv/bin/activate && deptry . || true
+	@echo "Run 'make secrets-scan' for dedicated secret leakage scan"
+
+secrets-scan:
+	@echo "Scanning for secrets..."
+	. .venv/bin/activate && detect-secrets scan --baseline .secrets.baseline . || true
+	@echo "If new findings appear, update baseline after review: detect-secrets scan > .secrets.baseline"
+
+lock:
+	@echo "Generating requirements.lock (deterministic hashes)"
+	python3 -m venv .venv || true
+	. .venv/bin/activate && python -m pip install -U pip pip-tools
+	. .venv/bin/activate && pip-compile --quiet --generate-hashes --output-file requirements.lock requirements.txt
+	@echo "Lock file written to requirements.lock"
 
 .PHONY: cli cli-snapshot cli-export cli-import cli-rebalance freeze
 cli:
@@ -60,6 +73,12 @@ cli-import:
 
 cli-rebalance:
 	. .venv/bin/activate && python -m cli.main rebalance $(ARGS)
+
+cli-benchmark:
+	. .venv/bin/activate && python -m cli.main benchmark-refresh $(ARGS)
+
+cli-risk-free:
+	. .venv/bin/activate && python -m cli.main risk-free $(ARGS)
 
 # Create a self-contained frozen snapshot under dist/release-<VERSION>
 freeze:
@@ -82,7 +101,13 @@ freeze:
 	# Record version metadata
 	echo $(VERSION) > dist/release-$(VERSION)/VERSION
 	# Create launch script
-	printf '#!/bin/bash\nDIR="$$(cd "$$("dirname" "$$0")" && pwd)"\nif [ ! -f "$$DIR/.venv/bin/activate" ]; then echo "Virtual env missing"; exit 1; fi\n. "$$DIR/.venv/bin/activate"\nexport APP_ENV=$${APP_ENV:-production}\necho "Starting Portfolio App (version $$(cat "$$DIR/VERSION" 2>/dev/null || echo unknown))"\nexec streamlit run "$$DIR/app.py"\n' > dist/release-$(VERSION)/launch.sh
+	printf '%s\n' '#!/bin/bash' \
+	'DIR="$(cd "$(dirname "$0")" && pwd)"' \
+	'if [ ! -f "$DIR/.venv/bin/activate" ]; then echo "Virtual env missing"; exit 1; fi' \
+	'. "$DIR/.venv/bin/activate"' \
+	'export APP_ENV="${APP_ENV:-production}"' \
+	'echo "Starting Portfolio App (version $(cat "$DIR/VERSION" 2>/dev/null || echo unknown))"' \
+	'exec streamlit run "$DIR/app.py"' > dist/release-$(VERSION)/launch.sh
 	chmod +x dist/release-$(VERSION)/launch.sh
 	@echo "Frozen release ready: dist/release-$(VERSION)"
 	@echo "Run: ./dist/release-$(VERSION)/launch.sh"

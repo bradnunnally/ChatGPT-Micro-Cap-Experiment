@@ -5,6 +5,7 @@ import streamlit as st
 
 from components.nav import navbar
 from services.market import fetch_price
+from services.money import format_money
 from services.time import get_clock
 from services.watchlist_service import (
     add_to_watchlist,
@@ -87,7 +88,7 @@ def watchlist_page():
             change_pct = None
             row_cols = st.columns([3, 2, 2, 1, 1])
             row_cols[0].write(ticker)
-            row_cols[1].write(f"${float(price):.2f}")
+            row_cols[1].write(format_money(float(price)))
             if change_pct is None:
                 row_cols[2].write("-")
             else:

@@ -8,6 +8,10 @@ import streamlit as st
 
 from app_settings import settings
 from components.nav import navbar
+from services.risk import compute_risk_block
+from services.benchmark import get_benchmark_series, BENCHMARK_SYMBOL_DEFAULT
+from services.risk_free import get_risk_free_rate
+from services.money import format_money
 
 st.set_page_config(page_title="Performance", layout="wide", initial_sidebar_state="collapsed")
 
@@ -174,21 +178,31 @@ def calculate_kpis(hist_filtered: pd.DataFrame) -> dict:
     }
 
 
-def display_kpis(kpis: dict, col_meta) -> None:
-    """Display KPIs in the metadata column."""
+def display_kpis(kpis: dict, risk_metrics, col_meta) -> None:
+    """Display KPIs (performance & risk) in the metadata column."""
     col_meta.subheader("Performance Summary")
 
-    metrics = [
+    perf_metrics = [
         ("Total Return (%)", f"{kpis['total_return']:.2f}%"),
-        ("Net Profit ($)", f"${kpis['net_profit']:.2f}"),
-        ("Initial Equity", f"${kpis['initial_equity']:.2f}"),
-        ("Final Equity", f"${kpis['final_equity']:.2f}"),
+        ("Net Profit", format_money(kpis['net_profit'])),
+        ("Initial Equity", format_money(kpis['initial_equity'])),
+        ("Final Equity", format_money(kpis['final_equity'])),
         ("Max Drawdown (%)", f"{kpis['max_drawdown']:.2f}%"),
         ("Number of Trading Days", f"{kpis['num_days']}"),
         ("Average Daily Return (%)", f"{kpis['avg_daily_return']:.2f}%"),
     ]
 
-    for label, value in metrics:
+    risk_section = [
+        ("Risk: MDD (%)", f"{risk_metrics.max_drawdown_pct:.2f}%"),
+        ("Risk: 20d Vol (%)", f"{risk_metrics.rolling_volatility_pct:.2f}%"),
+        ("Risk: Sharpe*", f"{risk_metrics.sharpe_like:.2f}"),
+        ("Risk: Top1 Concentration (%)", f"{risk_metrics.concentration_top1_pct:.2f}%"),
+        ("Risk: Top3 Concentration (%)", f"{risk_metrics.concentration_top3_pct:.2f}%"),
+    ("Risk: Beta~", f"{getattr(risk_metrics,'beta_like',0.0):.2f}"),
+    ("Risk: Sortino*", f"{getattr(risk_metrics,'sortino_like',0.0):.2f}"),
+    ]
+
+    for label, value in perf_metrics + risk_section:
         col_meta.metric(label, value)
 
 
@@ -250,7 +264,45 @@ def main() -> None:
 
     with col_meta:
         kpis = calculate_kpis(hist_filtered)
-        display_kpis(kpis, col_meta)
+        risk_metrics = compute_risk_block(hist_filtered)
+        display_kpis(kpis, risk_metrics, col_meta)
+
+    # Benchmark + risk-free details (after KPI display)
+    with st.expander("Benchmark & Risk-Free Details"):
+        bench_symbol = BENCHMARK_SYMBOL_DEFAULT
+        series = get_benchmark_series(bench_symbol)
+        rf = get_risk_free_rate()
+        st.write({
+            "benchmark_symbol": bench_symbol,
+            "benchmark_points": len(series),
+            "benchmark_last_date": series[-1]["date"] if series else None,
+            "risk_free_annual": rf,
+            "risk_free_daily_equiv": rf/252.0 if rf else 0.0,
+        })
+
+    # Attribution & position drill-down (current day)
+    latest_date = hist_filtered["date"].max()
+    todays_rows = hist_filtered[hist_filtered["date"] == latest_date].copy()
+    pos_rows = todays_rows[todays_rows["ticker"] != "TOTAL"].copy()
+    if not pos_rows.empty:
+        # Derive simple attribution if possible (cost_basis/shares creates buy_price proxy)
+        if {"pnl_price", "pnl_position", "pnl_total_attr"}.issubset(set(pos_rows.columns)):
+            with st.expander("PnL Attribution (Price vs Position)"):
+                show_cols = [c for c in ["ticker","shares","cost_basis","total_value","pnl_price","pnl_position","pnl_total_attr"] if c in pos_rows.columns]
+                # Format monetary columns
+                fmt_df = pos_rows[show_cols].copy()
+                for c in ["cost_basis","total_value","pnl_price","pnl_position","pnl_total_attr"]:
+                    if c in fmt_df.columns:
+                        fmt_df[c] = fmt_df[c].apply(lambda v: format_money(v) if isinstance(v,(int,float)) else v)
+                st.dataframe(fmt_df, use_container_width=True)
+        else:
+            with st.expander("Current Positions"):
+                show_cols = [c for c in ["ticker","shares","cost_basis","total_value"] if c in pos_rows.columns]
+                fmt_df = pos_rows[show_cols].copy()
+                for c in ["cost_basis","total_value"]:
+                    if c in fmt_df.columns:
+                        fmt_df[c] = fmt_df[c].apply(lambda v: format_money(v) if isinstance(v,(int,float)) else v)
+                st.dataframe(fmt_df, use_container_width=True)
 
 
 if __name__ == "__main__":

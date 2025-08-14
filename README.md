@@ -30,13 +30,17 @@ Check out the latest results in [`docs/experiment_details`](docs/experiment_deta
 
 This repository now includes a **full-featured Streamlit web application** for portfolio management and analysis.
 
-### Key Features:
-- **📱 Real-time Portfolio Dashboard** - Live tracking (Finnhub in production, synthetic in dev)
-- **📈 Performance Analytics** - Historical charts, KPIs, performance metrics  
-- **💰 Trading Interface** - Buy/sell stocks with validation
-- **👁️ Watchlist Management** - Track potential investments
-- **📊 Data Export** - Download snapshots & history
-- **🗄️ SQLite Database** - Persistent local data storage
+### Key Features (Phases 1–3):
+- **📱 Real-time Portfolio Dashboard** – Live tracking (Finnhub in production, synthetic in dev)
+- **📈 Performance Analytics** – Historical charts, KPIs, extended risk metrics (MDD, rolling volatility, Sharpe*, Sortino*, beta≈1 placeholder, concentration)
+- **🧩 PnL Attribution** – In‑memory per‑position decomposition (price vs position effect) displayed on Performance page
+- **🧪 Backtest Sandbox** – SMA crossover strategy runner with equity curve & signals (see Backtests page)
+- **🎯 Price Source Provenance** – Badge + raw code (BULK/API/MANUAL/ZERO/INIT) for transparency into pricing path
+- **💰 Trading Interface** – Buy/sell stocks with validation & audit logging
+- **👁️ Watchlist Management** – Track potential investments with Money formatting
+- **� Money Value Object** – Centralized decimal‑safe currency handling and formatting
+- **�📊 Data Export** – Download snapshots & history
+- **🗄️ SQLite Database** – Persistent local data storage
 
 ### Quick Start (Synthetic Dev Mode):
 
@@ -82,21 +86,23 @@ Caching (production):
 The app will open at `http://localhost:8501` with a clean interface ready for portfolio management.
 
 ### Application Architecture:
-- **Frontend**: Streamlit web interface with responsive design
-- **Backend**: Python services for trading, market data, and portfolio management  
+- **Frontend**: Streamlit web interface with responsive design (Dashboard, Performance, Backtests, Watchlist, User Guide)
+- **Backend**: Python services for trading, market data, portfolio management & analytics (risk + attribution)
 - **Database**: SQLite for reliable local data persistence
 - **Market Data**: Finnhub (production) or deterministic synthetic generator (dev)
-- **Testing**: Comprehensive test suite with ~89% coverage (target ≥80%)
+- **Analytics Layer**: Risk metrics, PnL attribution, equity curve backtesting
+- **Testing**: Comprehensive test suite (current ≈82% coverage, target ≥80%)
 
 ## 🛠️ Technical Stack
 
-- **Python 3.13+** - Core application runtime
-- **Streamlit** - Modern web application framework
-- **Pandas + NumPy** - Data manipulation and analysis
-- **finnhub-python** - Market data SDK
-- **SQLite** - Local database for data persistence
-- **Plotly** - Interactive data visualizations
-- **Pytest** - Comprehensive testing framework
+- **Python 3.13+** – Core application runtime
+- **Streamlit** – Web UI
+- **Pandas + NumPy** – Data manipulation & analytics
+- **Plotly** – Interactive visualizations (performance & backtests)
+- **finnhub-python** – Production market data (pluggable providers)
+- **SQLite** – Local persistence
+- **Typer** – CLI (snapshot, metrics, backtest, import/export)
+- **Pytest + Coverage** – Test harness (≥80% enforced)
 
 ## 📁 Project Structure
 
@@ -117,11 +123,15 @@ ChatGPT-Micro-Cap-Experiment/
 │   └── trading.db              # SQLite database file
 ├── pages/                      # Streamlit pages
 │   ├── user_guide_page.py       # User guide and help page
-│   ├── performance_page.py     # Portfolio performance analytics
+│   ├── performance_page.py     # Portfolio performance analytics (risk + attribution)
+│   ├── backtest_page.py        # Interactive strategy backtesting
 │   └── watchlist.py            # Stock watchlist management
 ├── services/                   # Business logic layer
 │   ├── logging.py              # Application logging
-│   ├── market.py               # Market data services
+│   ├── market.py               # Market data services (metrics + circuit breaker)
+│   ├── risk.py                 # Risk metrics & PnL attribution utilities
+│   ├── backtest.py             # Simple SMA backtest scaffold
+│   ├── money.py                # Money value object & formatting
 │   ├── portfolio_service.py    # Portfolio business logic
 │   ├── session.py              # Session management
 │   ├── trading.py              # Trading operations
@@ -182,10 +192,11 @@ pytest tests/test_portfolio_manager.py
 ```
 
 ### Code Quality:
-- **~89% Test Coverage** - Comprehensive testing across all major modules
-- **Type Hints** - Full type annotation for better code reliability
-- **Modular Architecture** - Clean separation of concerns
-- **Error Handling** - Robust error handling and user feedback
+- **~82% Test Coverage (≥80% gate)** – Broad testing across services, data layer & analytics
+- **Type Hints** – Progressive typing of core & analytics modules
+- **Modular Architecture** – Clear separation (UI / services / data / analytics)
+- **Resilience & Observability** – Circuit breaker + metrics persistence for price fetching
+- **Error Handling** – Domain error taxonomy with UI-friendly surfacing
 
 ## � Logging & Errors
 
@@ -236,10 +247,55 @@ The application uses SQLite for data storage in the `data/` directory. Configura
 4. **Track Performance**: Monitor your portfolio's performance over time
 
 ### Daily Workflow:
-- **Monitor Dashboard**: Check current positions and P&L
-- **Review Watchlist**: Track potential investment opportunities  
-- **Execute Trades**: Buy/sell positions based on your strategy
-- **Analyze Performance**: Review historical performance and metrics
+- **Monitor Dashboard** – Positions, weights, ROI %, price source badges
+- **Review Watchlist** – Track candidates with live/synthetic prices
+- **Execute Trades** – Use trading forms (PnL updates in snapshot)
+- **Analyze Performance** – Performance page: KPIs, extended risk, attribution table
+- **Run Backtests** – Backtests page: choose ticker or TOTAL equity, set SMA windows
+- **Export / Archive** – CLI or UI export for history snapshots
+
+### Backtests Page
+The Backtests page lets you experiment with a simple SMA crossover strategy:
+1. Select a ticker (or use `TOTAL` to treat portfolio equity as the price series)
+2. Choose fast / slow moving average windows
+3. Run to view equity curve, performance metrics, and signal table
+
+### Risk, Benchmark & Attribution
+Risk metrics include:
+- Max Drawdown, Rolling 20d Volatility, Sharpe (excess over daily risk-free), Sortino (excess downside), Beta (vs benchmark), Top 1 / Top 3 concentration.
+    - Benchmark: Daily closes for SPY pulled from Stooq (no key) and cached locally under `data/benchmarks/SPY.json` (auto-refresh first access per UTC day or via CLI).
+    - Risk-Free: Layered resolution: FRED 3M T-Bill (DGS3MO) if `FRED_API_KEY` set → `RISK_FREE_ANNUAL` environment override → 0.0. Cached per day at `data/risk_free.json`.
+    - Daily risk-free used = annual / 252. Sharpe & Sortino use excess returns (return - rf_daily).
+    - Beta falls back to self-beta (~1) if insufficient overlapping history ( <5 aligned daily points).
+PnL attribution decomposes per-position change into:
+- `pnl_price`: Prior shares * (Δ average cost proxy)
+- `pnl_position`: (Δ shares) * current buy price proxy
+- `pnl_total_attr`: Sum of the two (in-memory only; not persisted to DB yet)
+
+#### Benchmark & Risk-Free CLI Helpers
+```bash
+make cli-benchmark   # Force benchmark refresh (SPY)
+make cli-risk-free   # Show today's resolved risk-free annual rate
+```
+Environment overrides:
+```bash
+export FRED_API_KEY=YOUR_KEY_HERE
+export RISK_FREE_ANNUAL=0.04   # 4% assumed annual rate if FRED not configured
+```
+
+### Price Source Codes
+| Code | Meaning |
+|------|---------|
+| BULK | Bulk price fetch succeeded |
+| API | Individual API fallback |
+| MANUAL | User-entered override |
+| ZERO | No price found → 0.0 placeholder |
+| INIT | Initial placeholder before resolution |
+
+Badges appear beside each position for rapid provenance inspection.
+
+### Money Handling
+`services/money.py` supplies a `Money` value object and `format_money` helper for consistent rounding (quantized to cents) across Dashboard, Watchlist, and Performance KPIs.
 
 ## 🚨 Important Notes
 
@@ -248,6 +304,15 @@ The application uses SQLite for data storage in the `data/` directory. Configura
 - **Data Persistence**: All portfolio data stored locally (SQLite)
 - **Risk Management**: Always maintain appropriate position sizing and risk controls
 - **Educational Purpose**: This application is for educational and experimental use
+
+## 📌 Benchmark & Risk-Free Summary
+
+| Component  | Default | Source            | Cache Path                     | Refresh                                |
+|------------|---------|-------------------|--------------------------------|----------------------------------------|
+| Benchmark  | SPY     | Stooq daily CSV   | `data/benchmarks/SPY.json`     | Auto (first access per day) / CLI      |
+| Risk-Free  | DGS3MO  | FRED (if API key) | `data/risk_free.json`          | Auto (first access per day) / CLI      |
+
+Fallback chain for risk-free: FRED → `RISK_FREE_ANNUAL` env (decimal) → 0.0. Daily equivalent = annual / 252.
 
 ## 📈 Experiment Status
 
