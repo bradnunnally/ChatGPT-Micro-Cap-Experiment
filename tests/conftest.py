@@ -3,7 +3,6 @@ import sqlite3
 from contextlib import suppress
 import pandas as pd
 from tests.mock_streamlit import StreamlitMock
-from data.db import _close_thread_local_connection  # internal cleanup helper
 
 
 @pytest.fixture(autouse=True)
@@ -16,17 +15,7 @@ def cleanup_db():
         conn.close()
 
 
-@pytest.fixture(autouse=True)
-def close_thread_local_conn():
-    """Ensure thread-local reused SQLite connection is closed each test.
-
-    Without this, the weakref/atexit finalizer defers closure until interpreter
-    shutdown, which can trigger a ResourceWarning collection pass during the
-    test run (seen in coverage's unraisableexception hook). Calling the internal
-    helper keeps tests quiet and deterministic.
-    """
-    yield
-    _close_thread_local_connection()
+# Thread‑local connection reuse was removed; cleanup fixture no longer required.
 
 
 @pytest.fixture

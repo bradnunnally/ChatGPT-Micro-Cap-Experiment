@@ -15,15 +15,12 @@ class TestDatabaseCore:
         """Test database connection context manager."""
         from data.db import get_connection
 
-        # Setup mock connection
         mock_conn = Mock()
         mock_connect.return_value = mock_conn
 
-        # Test context manager
         with get_connection() as conn:
             assert conn is mock_conn
 
-        # Verify connection was opened
         mock_connect.assert_called_once()
 
     @patch("sqlite3.connect")
@@ -31,23 +28,14 @@ class TestDatabaseCore:
         """Test database table initialization."""
         from data.db import init_db
 
-        # Setup mock connection
         mock_conn = Mock()
-        mock_context = Mock()
-        mock_context.__enter__ = Mock(return_value=mock_conn)
-        mock_context.__exit__ = Mock(return_value=None)
-        mock_connect.return_value = mock_context
+        mock_connect.return_value = mock_conn
 
-        # Initialize database
         init_db()
-
-        # Verify tables were created
-        assert mock_conn.execute.call_count >= 4  # portfolio, cash, portfolio_history, trade_log
-
-        # Check for key table creation commands
-        calls = [str(call) for call in mock_conn.execute.call_args_list]
-        table_commands = [call for call in calls if "CREATE TABLE" in call.upper()]
-        assert len(table_commands) >= 4
+        assert mock_conn.execute.call_count >= 4
+        calls = [str(c) for c in mock_conn.execute.call_args_list]
+        table_cmds = [c for c in calls if "CREATE TABLE" in c.upper()]
+        assert len(table_cmds) >= 4
 
 
 class TestPortfolioDataOperations:

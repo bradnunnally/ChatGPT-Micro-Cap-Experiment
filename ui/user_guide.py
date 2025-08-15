@@ -90,6 +90,7 @@ def show_user_guide() -> None:
             - **Extensibility**: Implement `target_weights(ctx)` and register new strategies
             - **Testing**: Run `pytest` (coverage gate enforced)
             - **Graceful Degradation**: Turnover module optional; if absent, execution ignores enforcement silently
+            - **DB Transactions**: Use `from data.db import transaction` to batch multiple writes atomically & faster
             """
         )
 

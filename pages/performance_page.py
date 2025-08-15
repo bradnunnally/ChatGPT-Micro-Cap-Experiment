@@ -25,6 +25,7 @@ from services.alerts import load_alert_state
 from services.factors import factors_summary, get_factor_returns, DEFAULT_FACTORS
 from services.market import get_daily_price_series
 from services.attribution import compute_factor_attribution, compute_position_contributions
+from services.turnover_budget import get_window_usage
 
 st.set_page_config(page_title="Performance", layout="wide", initial_sidebar_state="collapsed")
 
@@ -304,6 +305,25 @@ def main() -> None:
         kpis = calculate_kpis(hist_filtered)
         risk_metrics = compute_risk_block(hist_filtered)
     display_kpis(kpis, risk_metrics, col_meta, hist_filtered)
+
+    # Turnover Budget Usage Panel
+    with st.expander("Turnover Budget Usage"):
+        try:
+            usage = get_window_usage()
+        except Exception:
+            usage = None
+        if not usage:
+            st.caption("Turnover budget not initialized yet.")
+        else:
+            used = usage.get("used_pct", 0.0)
+            max_pct = usage.get("max_pct", 0.0)
+            remaining = usage.get("remaining_pct", 0.0)
+            cols_tb = st.columns(3)
+            cols_tb[0].metric("Used %", f"{used*100:.2f}%")
+            cols_tb[1].metric("Remaining %", f"{remaining*100:.2f}%")
+            cols_tb[2].metric("Cap %", f"{max_pct*100:.0f}%")
+            st.progress(min(1.0, used / max_pct) if max_pct else 0.0)
+            st.caption("Cumulative trade notional / avg equity over rolling window.")
 
     # Rolling Beta Visualization (portfolio TOTAL vs benchmark)
     with st.expander("Rolling Beta (vs Benchmark)"):

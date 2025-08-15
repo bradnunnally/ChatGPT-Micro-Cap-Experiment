@@ -34,24 +34,22 @@ class TestDatabase:
         try:
             # Patch the DB_FILE to use our temp file
             with patch("data.db.DB_FILE", temp_path):
-                conn = get_connection()
-                assert isinstance(conn, sqlite3.Connection)
-                conn.close()
+                with get_connection() as conn:
+                    assert isinstance(conn, sqlite3.Connection)
         finally:
             # Clean up
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
 
-    @patch("data.db.get_connection")
-    def test_init_db(self, mock_get_connection):
+    @patch("sqlite3.connect")
+    def test_init_db(self, mock_connect):
         """Test database initialization."""
-        # Mock connection
         mock_conn = MagicMock()
-        mock_get_connection.return_value.__enter__.return_value = mock_conn
+        mock_connect.return_value = mock_conn
 
         init_db()
 
-        # Verify that executescript was called with the schema
+        # executescript should have been attempted with SCHEMA
         mock_conn.executescript.assert_called_once_with(SCHEMA)
 
     def test_init_db_creates_tables(self):

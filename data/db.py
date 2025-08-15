@@ -1,9 +1,7 @@
 import sqlite3
-import atexit
-import threading
-import weakref
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Iterator
 
 from app_settings import settings
 
@@ -11,8 +9,6 @@ from app_settings import settings
 # Use a Path so either str or Path patches will work when coerced below.
 DB_FILE = settings.paths.db_file
 
-# Thread-local cached connection (reduces churn & ResourceWarnings in tests)
-_thread_local = threading.local()
 
 SCHEMA_STATEMENTS = [
     """
@@ -116,98 +112,62 @@ SCHEMA_STATEMENTS = [
 # Backward-compat schema string for tests that import SCHEMA
 SCHEMA = "\n".join(stmt.strip() for stmt in SCHEMA_STATEMENTS)
 
+PRAGMAS = [
+    "PRAGMA journal_mode=WAL;",
+    "PRAGMA synchronous=NORMAL;",
+    "PRAGMA busy_timeout=3000;",
+]
 
-def get_connection(reuse: bool = False) -> Any:
-    """Return a SQLite connection with sane pragmas.
 
-    Features:
-    - Ensures data directory exists.
-    - Optional thread-local reuse to reduce connection churn in hot paths.
-    - Attaches a weakref finalizer to close uncollected connections (mitigates ResourceWarnings).
-    - Applies WAL + busy timeout pragmas best-effort.
-    - Wraps bare mocks (without context manager methods) in a lightweight proxy so tests
-      using monkeypatched sqlite3.connect still work with `with get_connection():`.
-    """
+def _apply_pragmas(conn: sqlite3.Connection) -> None:
+    for p in PRAGMAS:
+        try:
+            conn.execute(p)
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+
+@contextmanager
+def get_connection() -> Iterator[sqlite3.Connection]:
+    """Yield a fresh SQLite connection (always closed)."""
     Path(settings.paths.data_dir).mkdir(parents=True, exist_ok=True)
-    if reuse:
-        cached = getattr(_thread_local, "conn", None)
-        if cached is not None:
-            return cached
-    raw = sqlite3.connect(str(DB_FILE))
-
-    def _safe_close(c):  # pragma: no cover - defensive close
-        try:
-            if getattr(c, "in_transaction", False):  # commit if open txn
-                try:
-                    c.commit()
-                except Exception:
-                    pass
-            c.close()
-        except Exception:
-            pass
-
+    conn = sqlite3.connect(str(DB_FILE))
+    _apply_pragmas(conn)
     try:
-        weakref.finalize(raw, _safe_close, raw)
-    except Exception:  # pragma: no cover
-        pass
-    try:
-        raw.execute("PRAGMA journal_mode=WAL;")
-        raw.execute("PRAGMA synchronous=NORMAL;")
-        raw.execute("PRAGMA busy_timeout=3000;")
-    except Exception:
-        pass
-
-    if hasattr(raw, "__enter__") and hasattr(raw, "__exit__"):
-        if reuse:
-            _thread_local.conn = raw
-        return raw
-
-    class _ConnProxy:
-        def __init__(self, underlying):
-            self._u = underlying
-        def __enter__(self):
-            return self._u
-        def __exit__(self, exc_type, exc, tb):
+        yield conn
+        if conn.in_transaction:
             try:
-                self._u.close()
-            except Exception:
+                conn.commit()
+            except Exception:  # pragma: no cover
                 pass
-            return False
-        def __getattr__(self, name):
-            return getattr(self._u, name)
-
-    proxy = _ConnProxy(raw)
-    if reuse:
-        _thread_local.conn = proxy
-    return proxy
-
-
-def _close_thread_local_connection() -> None:  # pragma: no cover - best effort cleanup
-    conn = getattr(_thread_local, "conn", None)
-    if conn is not None:
+    finally:
         try:
-            if getattr(conn, "in_transaction", False):
-                try:
-                    conn.commit()
-                except Exception:
-                    pass
             conn.close()
-        except Exception:
+        except Exception:  # pragma: no cover
             pass
-        finally:
+
+
+@contextmanager
+def transaction() -> Iterator[sqlite3.Connection]:
+    """Group multiple statements in a single connection & atomic transaction."""
+    with get_connection() as conn:
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
             try:
-                delattr(_thread_local, "conn")
-            except Exception:
+                conn.rollback()
+            except Exception:  # pragma: no cover
                 pass
+            raise
 
 
-# Register a process-exit cleanup to silence ResourceWarning for lingering thread-local
-atexit.register(_close_thread_local_connection)
+# Removed thread‑local connection cache & atexit cleanup (no longer needed)
 
 
 def init_db() -> None:
     """Initialise the database with required tables if they don't exist."""
-    with get_connection(reuse=False) as conn:
+    with get_connection() as conn:
         # Keep executescript for tests importing SCHEMA
         try:
             conn.executescript(SCHEMA)
