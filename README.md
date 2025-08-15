@@ -30,16 +30,18 @@ Check out the latest results in [`docs/experiment_details`](docs/experiment_deta
 
 This repository now includes a **full-featured Streamlit web application** for portfolio management and analysis.
 
-### Key Features (Phases 1–3):
+### Key Features (Phases 1–6):
 - **📱 Real-time Portfolio Dashboard** – Live tracking (Finnhub in production, synthetic in dev)
-- **📈 Performance Analytics** – Historical charts, KPIs, extended risk metrics (MDD, rolling volatility, Sharpe*, Sortino*, beta≈1 placeholder, concentration)
+- **📈 Performance Analytics** – Historical charts, KPIs, extended risk metrics (MDD, rolling volatility, Sharpe*, Sortino*, beta≈1 placeholder, concentration, VaR/ES 95 & 99, rolling multi-window betas, correlation matrix, VaR95 hit ratio, position VaR contributions)
 - **🧩 PnL Attribution** – In‑memory per‑position decomposition (price vs position effect) displayed on Performance page
-- **🧪 Backtest Sandbox** – SMA crossover strategy runner with equity curve & signals (see Backtests page)
+- **🧪 Backtest Sandbox** – SMA crossover strategy runner with equity curve & signals (see Backtests page) plus train/test overfit guard & scheduled mini SMA grid sweeps (rotating leaderboard snapshots)
 - **🎯 Price Source Provenance** – Badge + raw code (BULK/API/MANUAL/ZERO/INIT) for transparency into pricing path
 - **💰 Trading Interface** – Buy/sell stocks with validation & audit logging
 - **👁️ Watchlist Management** – Track potential investments with Money formatting
-- **� Money Value Object** – Centralized decimal‑safe currency handling and formatting
-- **�📊 Data Export** – Download snapshots & history
+- **💵 Money Value Object** – Centralized decimal‑safe currency handling and formatting
+- ** Data Export** – Download snapshots & history
+- **⏱️ In‑App Scheduler** – Benchmark & risk‑free refresh, portfolio snapshots, fundamentals cache, periodic SMA grid mini‑backtests, alert evaluation
+- **🚨 Risk Alerts** – Threshold alerts (drawdown, top1 concentration, VaR95) with persisted log + state panel in UI
 - **🗄️ SQLite Database** – Persistent local data storage
 
 ### Quick Start (Synthetic Dev Mode):

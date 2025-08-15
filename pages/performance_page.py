@@ -8,11 +8,20 @@ import streamlit as st
 
 from app_settings import settings
 from components.nav import navbar
-from services.risk import compute_risk_block, compute_rolling_betas, drawdown_table
+from services.risk import (
+    compute_risk_block,
+    compute_rolling_betas,
+    drawdown_table,
+    compute_correlation_matrix,
+    compute_var_hit_ratio,
+    compute_position_var_contributions,
+    compute_average_pairwise_correlation,
+)
 from services.benchmark import get_benchmark_series, BENCHMARK_SYMBOL_DEFAULT
 from services.risk_free import get_risk_free_rate
 from services.money import format_money
 from services.fundamentals import batch_get_fundamentals
+from services.alerts import load_alert_state
 
 st.set_page_config(page_title="Performance", layout="wide", initial_sidebar_state="collapsed")
 
@@ -201,6 +210,10 @@ def display_kpis(kpis: dict, risk_metrics, col_meta, hist_filtered: pd.DataFrame
         ("Risk: Top3 Concentration (%)", f"{risk_metrics.concentration_top3_pct:.2f}%"),
     ("Risk: Beta~", f"{getattr(risk_metrics,'beta_like',0.0):.2f}"),
     ("Risk: Sortino*", f"{getattr(risk_metrics,'sortino_like',0.0):.2f}"),
+    ("Risk: VaR95 (%)", f"{getattr(risk_metrics,'var_95_pct',0.0):.2f}"),
+    ("Risk: ES95 (%)", f"{getattr(risk_metrics,'es_95_pct',0.0):.2f}"),
+    ("Risk: VaR99 (%)", f"{getattr(risk_metrics,'var_99_pct',0.0):.2f}"),
+    ("Risk: ES99 (%)", f"{getattr(risk_metrics,'es_99_pct',0.0):.2f}"),
     ]
 
     for label, value in perf_metrics + risk_section:
@@ -331,6 +344,54 @@ def main() -> None:
                 if "Depth (%)" in fmt.columns:
                     fmt["Depth (%)"] = fmt["Depth (%)"].map(lambda v: f"{v:.2f}%")
                 st.dataframe(fmt, use_container_width=True)
+
+    # Correlation Matrix
+    with st.expander("Correlation Matrix (Ticker Daily Returns)"):
+        corr = compute_correlation_matrix(hist_filtered)
+        if corr.empty:
+            st.caption("Not enough data / tickers for correlation matrix.")
+        else:
+            st.dataframe(corr.round(2), use_container_width=True)
+
+    # VaR Hit Ratio (requires sufficient history)
+    with st.expander("VaR 95% Hit Ratio (Rolling 100d)"):
+        tot = hist_filtered[hist_filtered["ticker"] == "TOTAL"].sort_values("date")
+        if tot.shape[0] < 160:
+            st.caption("Need at least 160 days of portfolio history to evaluate hit ratio.")
+        else:
+            # Build daily return series
+            eq = pd.to_numeric(tot["total_equity"], errors="coerce").ffill()
+            returns = eq.pct_change(fill_method=None)
+            hit_ratio = compute_var_hit_ratio(returns, level=0.95, window=100)
+            st.metric("Hit Ratio", f"{hit_ratio*100:.2f}%")
+            st.caption("Expected exceedance frequency for VaR95 is ~5%. Values >>5% suggest VaR underestimates risk; values <<5% suggest it's conservative.")
+
+    # Position VaR Contributions
+    with st.expander("Position VaR Contributions (Parametric Approx)"):
+        contrib_df = compute_position_var_contributions(hist_filtered)
+        if contrib_df.empty:
+            st.caption("Insufficient data to compute contributions (need positions & return history).")
+        else:
+            show_cols = [c for c in ["ticker","weight_pct","contrib_var_pct","contrib_var_pct_norm","marginal_contrib_pct"] if c in contrib_df.columns]
+            st.dataframe(contrib_df[show_cols].round(2), use_container_width=True)
+
+    # Average Pairwise Correlation Trend
+    with st.expander("Average Pairwise Correlation (Rolling 30d)"):
+        avg_corr = compute_average_pairwise_correlation(hist_filtered, window=30)
+        if avg_corr.empty:
+            st.caption("Need ≥2 tickers and sufficient overlapping history.")
+        else:
+            import plotly.express as px
+            fig_corr = px.line(avg_corr.reset_index(), x="date", y=avg_corr.name, title="Avg Pairwise Correlation (30d)")
+            st.plotly_chart(fig_corr, use_container_width=True)
+
+    # Alerts State
+    with st.expander("Alerts State"):
+        state = load_alert_state()
+        if not state:
+            st.caption("No alert evaluations yet.")
+        else:
+            st.json(state)
 
     # Benchmark + risk-free details (after KPI display)
     with st.expander("Benchmark & Risk-Free Details"):

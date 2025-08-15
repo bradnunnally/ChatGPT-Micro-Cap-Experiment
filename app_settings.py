@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     trading_holidays: List[str] = Field(
         default_factory=list, description="List of YYYY-MM-DD holiday dates when market is closed"
     )
+    # Alert thresholds
+    alert_drawdown_pct: float = Field(default=10.0, description="Trigger alert when drawdown exceeds this % (positive number)")
+    alert_concentration_top1_pct: float = Field(default=40.0, description="Trigger alert when top1 concentration exceeds %")
+    alert_var95_pct: float = Field(default=4.0, description="Trigger alert when 1-day 95% VaR exceeds % of equity")
 
     @field_validator(
         "data_dir", "db_file", "portfolio_csv", "trade_log_csv", "watchlist_file", mode="after"

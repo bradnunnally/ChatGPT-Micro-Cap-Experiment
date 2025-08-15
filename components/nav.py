@@ -4,9 +4,29 @@ import base64
 from pathlib import Path
 
 import streamlit as st
+from services.alerts import load_alert_state
 
 from services.session import init_session_state
 from services.market import get_metrics
+
+
+def _alert_badge_html() -> str:
+    try:
+        state = load_alert_state()
+        events = state.get("open_events") if isinstance(state, dict) else []
+        if events:
+            sev = 0
+            for e in events:
+                t = e.get("type")
+                if t == "drawdown_threshold":
+                    sev = max(sev, 2)
+                elif t in {"var95", "concentration_top1"}:
+                    sev = max(sev, 1)
+            color = {2: "#d32f2f", 1: "#ef6c00"}.get(sev, "#616161")
+            return f"<span style='background:{color};color:#fff;padding:2px 8px;border-radius:12px;font-size:0.65rem;margin-left:0.5rem;'>ALERTS {len(events)}</span>"
+    except Exception:
+        pass
+    return ""
 
 
 def navbar(active_page: str) -> None:
@@ -64,6 +84,7 @@ def navbar(active_page: str) -> None:
         else:
             csv_link = "<span class='nav-link'>Download Portfolio</span>"
 
+        alerts_badge = _alert_badge_html()
         st.markdown(
             f"""
             <div class="nav-container">
@@ -73,6 +94,7 @@ def navbar(active_page: str) -> None:
                 <a class="nav-link {'active' if active_page == Path('pages/user_guide_page.py').name else ''}" href="/user_guide_page" target="_self">User Guide</a>
                 <a class="nav-link {'active' if active_page == Path('pages/watchlist.py').name else ''}" href="/watchlist" target="_self">Watchlist</a>
                 {csv_link}
+                {alerts_badge}
             </div>
             <hr />
             """,

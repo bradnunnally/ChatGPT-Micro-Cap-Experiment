@@ -18,6 +18,7 @@ from services.risk import attribute_pnl
 from services.backtest import run_backtest, simple_moving_average_strategy
 from services.benchmark import update_benchmark, get_benchmark_series, BENCHMARK_SYMBOL_DEFAULT
 from services.risk_free import get_risk_free_rate
+from services.scheduler import build_default_scheduler, Scheduler
 
 app = typer.Typer(help="CLI tools for portfolio operations (snapshots, rebalance, import, export)")
 
@@ -241,6 +242,24 @@ def risk_free():
     """Show today's resolved risk-free annual rate (layered)."""
     rf = get_risk_free_rate()
     typer.echo(json.dumps({"event": "risk-free", "rate_annual": rf}))
+
+
+@app.command("scheduler")
+def scheduler(
+    loop: bool = typer.Option(False, help="Run continuous loop"),
+    iterations: int = typer.Option(1, help="Max iterations when not looping (each checks due jobs)"),
+    sleep: float = typer.Option(1.0, help="Sleep seconds between iterations when looping"),
+):
+    """Run the default maintenance scheduler (benchmark, risk-free, snapshot).
+
+    By default runs a single pass (once). Use --loop for continuous execution.
+    """
+    sched: Scheduler = build_default_scheduler()
+    if loop:
+        sched.run_loop(sleep_seconds=sleep)
+    else:
+        sched.run_loop(once=True, max_iterations=iterations)
+    typer.echo(json.dumps({"event": "scheduler_state", "jobs": sched.jobs_state()}))
 
 
 def main():

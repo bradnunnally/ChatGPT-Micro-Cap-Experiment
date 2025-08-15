@@ -22,6 +22,34 @@ import pandas as pd
 
 from app_settings import settings
 from services.backtest import BacktestResult
+import glob
+
+
+def load_grid_leaderboard(max_files: int = 10) -> pd.DataFrame:
+    """Load recent SMA grid summary CSVs produced by scheduler.
+
+    Returns a concatenated DataFrame with file timestamp & rank, limited to max_files most recent.
+    Missing directory or no files -> empty DataFrame.
+    """
+    sched_dir = Path(settings.paths.data_dir) / "scheduler" / "grid_summaries"
+    if not sched_dir.exists():
+        return pd.DataFrame()
+    files = sorted(sched_dir.glob("sma_grid_*.csv"), reverse=True)[:max_files]
+    rows = []
+    for f in files:
+        try:
+            df = pd.read_csv(f)
+            df["_file"] = f.name
+            # derive timestamp from filename pattern sma_grid_YYYYMMDD-HHMMSS.csv
+            ts_part = f.stem.replace("sma_grid_", "")
+            df["_ts"] = pd.to_datetime(ts_part, format="%Y%m%d-%H%M%S", errors="coerce")
+            rows.append(df)
+        except Exception:
+            continue
+    if not rows:
+        return pd.DataFrame()
+    out = pd.concat(rows, ignore_index=True)
+    return out
 
 
 def _root() -> Path:

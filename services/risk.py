@@ -4,6 +4,7 @@ import pandas as pd
 import hashlib
 import json
 from dataclasses import dataclass
+import numpy as np  # needed for correlation utilities
 from services.benchmark import get_benchmark_series, BENCHMARK_SYMBOL_DEFAULT
 from services.risk_free import get_risk_free_rate
 
@@ -18,6 +19,10 @@ class RiskMetrics:
     beta_like: float = 0.0
     sortino_like: float = 0.0
     sharpe: float | None = None  # canonical sharpe (excess mean / std * sqrt(252))
+    var_95_pct: float = 0.0  # 95% one-day VaR (% loss, positive number)
+    es_95_pct: float = 0.0   # 95% Expected Shortfall (% loss)
+    var_99_pct: float = 0.0  # 99% VaR
+    es_99_pct: float = 0.0   # 99% ES
 
 
 def compute_drawdown(equity_series: pd.Series) -> pd.Series:
@@ -92,6 +97,36 @@ def sortino_like_ratio(daily_returns: pd.Series) -> float:
     if dd == 0:
         return 0.0
     return float(daily_returns.mean() / dd * (252 ** 0.5))
+
+
+# --- Advanced Risk (Historical VaR / ES) ---
+def historical_var(returns: pd.Series, level: float = 0.95) -> float:
+    """Historical (non-parametric) Value at Risk.
+
+    Returns positive percentage loss magnitude. If insufficient data, returns 0.
+    Example: level=0.95 -> 5th percentile of returns distribution.
+    """
+    r = pd.to_numeric(returns, errors="coerce").dropna()
+    if r.empty:
+        return 0.0
+    # Lower tail quantile (e.g., 5% for 95% VaR)
+    q = r.quantile(1 - level)
+    return float(-q * 100.0) if q < 0 else 0.0
+
+
+def historical_es(returns: pd.Series, level: float = 0.95) -> float:
+    """Historical Expected Shortfall (a.k.a. CVaR) at level.
+
+    Mean loss beyond the VaR threshold. Returns positive percentage.
+    """
+    r = pd.to_numeric(returns, errors="coerce").dropna()
+    if r.empty:
+        return 0.0
+    cutoff = r.quantile(1 - level)
+    tail = r[r <= cutoff]
+    if tail.empty:
+        return 0.0
+    return float(-tail.mean() * 100.0) if tail.mean() < 0 else 0.0
 
 
 def _history_fingerprint(history_df: pd.DataFrame) -> str:
@@ -169,7 +204,25 @@ def compute_risk_block(history_df: pd.DataFrame, use_cache: bool = True, benchma
     latest_date = total_rows["date"].max()
     latest_positions = history_df[history_df["date"] == latest_date]
     c1, c3 = concentration(latest_positions)
-    metrics = RiskMetrics(mdd, vol, sharpe, c1, c3, beta_like=beta, sortino_like=sortino, sharpe=canonical_sharpe)
+    # Advanced risk (historical VaR / ES) on excess returns
+    var95 = historical_var(excess_ret, 0.95)
+    es95 = historical_es(excess_ret, 0.95)
+    var99 = historical_var(excess_ret, 0.99)
+    es99 = historical_es(excess_ret, 0.99)
+    metrics = RiskMetrics(
+        mdd,
+        vol,
+        sharpe,
+        c1,
+        c3,
+        beta_like=beta,
+        sortino_like=sortino,
+        sharpe=canonical_sharpe,
+        var_95_pct=var95,
+        es_95_pct=es95,
+        var_99_pct=var99,
+        es_99_pct=es99,
+    )
     if use_cache:
         _risk_cache[key] = metrics  # type: ignore[name-defined]
     return metrics
@@ -348,3 +401,207 @@ def drawdown_table(equity_series: pd.Series, top_n: int = 5) -> pd.DataFrame:
         "Open": df["open"],
     })
     return df_formatted.reset_index(drop=True)
+
+
+# --- Correlation Matrix Utilities ---
+def compute_ticker_return_matrix(history_df: pd.DataFrame) -> pd.DataFrame:
+    """Return matrix (date x tickers) of daily percentage returns for individual tickers.
+
+    Excludes 'TOTAL'. Rows with all NaN removed.
+    """
+    if history_df.empty:
+        return pd.DataFrame()
+    sub = history_df[history_df["ticker"] != "TOTAL"].copy()
+    if sub.empty:
+        return pd.DataFrame()
+    sub = sub.sort_values("date")
+    pivot = sub.pivot_table(index="date", columns="ticker", values="total_value", aggfunc="last")
+    returns = pivot.pct_change()
+    returns = returns.dropna(how="all")
+    return returns
+
+
+def compute_correlation_matrix(history_df: pd.DataFrame) -> pd.DataFrame:
+    rm = compute_ticker_return_matrix(history_df)
+    if rm.empty:
+        return pd.DataFrame()
+    return rm.corr()
+
+
+def compute_average_pairwise_correlation(history_df: pd.DataFrame, window: int = 30) -> pd.Series:
+    """Compute rolling average off-diagonal pairwise correlation among tickers.
+
+    Returns Series indexed by end-date of each window with average correlation (NaN if <2 tickers or insufficient window).
+    """
+    rm = compute_ticker_return_matrix(history_df)
+    if rm.empty or rm.shape[1] < 2:
+        return pd.Series(dtype=float)
+    rm = rm.sort_index()
+    vals = []
+    idx = []
+    for i in range(window, len(rm) + 1):
+        sub = rm.iloc[i - window: i]
+        if sub.shape[1] < 2:
+            continue
+        corr = sub.corr()
+        # extract off-diagonal values
+        if corr.shape[0] < 2:
+            continue
+        off_diag = corr.values[np.triu_indices_from(corr.values, k=1)]  # type: ignore[name-defined]
+        if off_diag.size == 0:
+            continue
+        vals.append(float(off_diag.mean()))
+        idx.append(rm.index[i - 1])
+    if not vals:
+        return pd.Series(dtype=float)
+    return pd.Series(vals, index=idx, name=f"avg_corr_{window}d")
+
+
+# --- VaR Hit Ratio & Position VaR Contribution ---
+def compute_rolling_historical_var(returns: pd.Series, level: float = 0.95, window: int = 100) -> pd.Series:
+    """Rolling historical VaR (positive % loss) using a trailing window.
+
+    For each point from window onward, calculate (1-level) lower quantile of returns.
+    Returns a Series aligned to the original index (NaN for first window-1 rows) with VaR as positive % loss.
+    """
+    r = pd.to_numeric(returns, errors="coerce")
+    out = pd.Series(index=r.index, dtype=float)
+    if r.empty or window < 10 or r.shape[0] < window:
+        return out
+    for i in range(window, len(r) + 1):
+        sub = r.iloc[i - window: i].dropna()
+        if sub.empty:
+            continue
+        q = sub.quantile(1 - level)
+        out.iloc[i - 1] = -q * 100 if q < 0 else 0.0
+    return out
+
+
+def compute_var_hit_ratio(returns: pd.Series, level: float = 0.95, window: int = 100) -> float:
+    """Compute hit ratio: fraction of days actual loss exceeded rolling VaR.
+
+    Exceedance defined where (return < lower quantile) i.e. loss magnitude > VaR.
+    """
+    r = pd.to_numeric(returns, errors="coerce").dropna()
+    if r.empty or r.shape[0] < window + 5:
+        return 0.0
+    rolling_var = compute_rolling_historical_var(r, level=level, window=window)
+    exceed = 0
+    total = 0
+    for i in range(window, len(r)):
+        var_val = rolling_var.iloc[i]
+        if pd.isna(var_val):
+            continue
+        ret = r.iloc[i]
+        # var_val is positive % loss; compare
+        if ret < 0 and (-ret * 100) > var_val + 1e-12:  # strict exceedance
+            exceed += 1
+        total += 1
+    if total == 0:
+        return 0.0
+    return float(exceed / total)
+
+
+def compute_position_var_contributions(history_df: pd.DataFrame, level: float = 0.95, lookback: int = 100) -> pd.DataFrame:
+    """Approximate position VaR contributions using parametric (variance-covariance) approach.
+
+    Steps:
+      1. Build return matrix for tickers (exclude TOTAL) over lookback.
+      2. Compute covariance matrix and weights (latest total_value).
+      3. Portfolio volatility sigma_p = sqrt(w^T Σ w).
+      4. Parametric VaR_p = z * sigma_p * 100 (z from normal quantile).
+      5. Marginal contribution MC_i = (Σ w)_i / sigma_p where (Σ w)_i is i-th element of Σ w.
+      6. Component VaR_i = MC_i * w_i * z * 100.
+
+    Returns DataFrame with columns: ticker, weight_pct, contrib_var95_pct, mc_pct.
+    NOTE: Uses normal approximation; for small sample sizes results are indicative only.
+    """
+    if history_df.empty:
+        return pd.DataFrame(columns=["ticker","weight_pct","contrib_var_pct","marginal_contrib_pct"])
+    returns_mat = compute_ticker_return_matrix(history_df)
+    if returns_mat.empty:
+        return pd.DataFrame(columns=["ticker","weight_pct","contrib_var_pct","marginal_contrib_pct"])
+    # Use lookback tail
+    if returns_mat.shape[0] > lookback:
+        returns_mat = returns_mat.tail(lookback)
+    cov = returns_mat.cov()
+    if cov.isnull().values.any():
+        cov = cov.fillna(0)
+    tickers = list(cov.columns)
+    # Latest weights from history
+    latest_date = history_df["date"].max()
+    latest = history_df[(history_df["date"] == latest_date) & (history_df["ticker"].isin(tickers))]
+    if latest.empty or "total_value" not in latest.columns:
+        return pd.DataFrame(columns=["ticker","weight_pct","contrib_var_pct","marginal_contrib_pct"])
+    values = latest.set_index("ticker")["total_value"].reindex(tickers).fillna(0).astype(float)
+    total_val = values.sum()
+    if total_val <= 0:
+        return pd.DataFrame(columns=["ticker","weight_pct","contrib_var_pct","marginal_contrib_pct"])
+    weights = values / total_val
+    w_vec = weights.values
+    # Portfolio variance
+    import numpy as np
+    sigma_p2 = float(np.dot(w_vec, np.dot(cov.values, w_vec)))
+    if sigma_p2 <= 0:
+        return pd.DataFrame(columns=["ticker","weight_pct","contrib_var_pct","marginal_contrib_pct"])
+    sigma_p = sigma_p2 ** 0.5
+    # z-score approximation
+    from math import sqrt
+    # z-score approximation without external dependencies
+    def _z_score(p: float) -> float:
+        mapping = {
+            0.90: 1.2815515655,
+            0.95: 1.6448536269,
+            0.975: 1.9599639845,
+            0.99: 2.3263478740,
+            0.995: 2.5758293035,
+            0.999: 3.0902323062,
+        }
+        if p in mapping:
+            return mapping[p]
+        # Acklam's approximation for inverse normal CDF
+        # Source: Peter J. Acklam (2003)
+        import math
+        a = [ -3.969683028665376e+01,  2.209460984245205e+02,
+              -2.759285104469687e+02,  1.383577518672690e+02,
+              -3.066479806614716e+01,  2.506628277459239e+00 ]
+        b = [ -5.447609879822406e+01,  1.615858368580409e+02,
+              -1.556989798598866e+02,  6.680131188771972e+01,
+              -1.328068155288572e+01 ]
+        c = [ -7.784894002430293e-03, -3.223964580411365e-01,
+              -2.400758277161838e+00, -2.549732539343734e+00,
+               4.374664141464968e+00,  2.938163982698783e+00 ]
+        d = [ 7.784695709041462e-03,  3.224671290700398e-01,
+              2.445134137142996e+00,  3.754408661907416e+00 ]
+        plow = 0.02425
+        phigh = 1 - plow
+        if p < plow:
+            q = math.sqrt(-2 * math.log(p))
+            return (((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) / \
+                   ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1)
+        if phigh < p:
+            q = math.sqrt(-2 * math.log(1 - p))
+            return -(((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) / \
+                    ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1)
+        q = p - 0.5
+        r = q * q
+        return (((((a[0]*r + a[1])*r + a[2])*r + a[3])*r + a[4])*r + a[5]) * q / \
+               (((((b[0]*r + b[1])*r + b[2])*r + b[3])*r + b[4])*r + 1)
+
+    z = _z_score(level)
+    # Marginal contributions vector Σ w
+    sigma_w = cov.values.dot(w_vec)
+    mc = sigma_w / sigma_p  # marginal contribution to volatility
+    # Component VaR contributions
+    comp_var = mc * w_vec * z * 100  # percent loss units
+    df = pd.DataFrame({
+        "ticker": tickers,
+        "weight_pct": (w_vec * 100),
+        "marginal_contrib_pct": (mc * 100),
+        "contrib_var_pct": comp_var,
+    })
+    # Normalize contributions to sum to portfolio VaR (presentational)
+    total_comp = df["contrib_var_pct"].sum()
+    if total_comp > 0:
+        df["contrib_var_pct_norm"] = df["contrib_var_pct"] / total_comp * (z * sigma_p * 100)
+    return df.sort_values("contrib_var_pct", ascending=False).reset_index(drop=True)

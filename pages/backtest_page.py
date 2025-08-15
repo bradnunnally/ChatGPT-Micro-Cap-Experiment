@@ -7,7 +7,7 @@ import sqlite3
 from components.nav import navbar
 from app_settings import settings
 from services.backtest import run_backtest, simple_moving_average_strategy, BacktestResult
-from services.backtest_store import save_backtest, list_runs, load_runs
+from services.backtest_store import save_backtest, list_runs, load_runs, load_grid_leaderboard
 import time
 from strategies.grid import run_sma_grid, summarize_results
 
@@ -71,6 +71,31 @@ with st.expander("Parameter Grid Runner"):
                         st.success("Top run saved")
             except ValueError:
                 st.error("Invalid integer list for fast/slow values")
+
+with st.expander("Scheduled Grid Leaderboard (Recent Snapshots)"):
+    lb = load_grid_leaderboard(max_files=10)
+    if lb.empty:
+        st.caption("No scheduled grid summaries yet (scheduler must run at least once).")
+    else:
+        # Basic filters
+        c1, c2, c3 = st.columns(3)
+        min_test_sharpe = c1.number_input("Min Test Sharpe", value=0.0, step=0.1)
+        max_rank = c2.number_input("Max Rank", value=10, min_value=1)
+        show_file = c3.selectbox("File (snapshot)", options=["ALL"] + sorted(lb["_file"].unique()))
+        filtered = lb.copy()
+        if "test_sharpe_like" in filtered.columns:
+            filtered = filtered[filtered["test_sharpe_like"] >= min_test_sharpe]
+        if "rank" in filtered.columns:
+            filtered = filtered[filtered["rank"] <= max_rank]
+        if show_file != "ALL":
+            filtered = filtered[filtered["_file"] == show_file]
+        # Order by timestamp desc then rank
+        if "_ts" in filtered.columns and "rank" in filtered.columns:
+            filtered = filtered.sort_values(["_ts","rank"], ascending=[False, True])
+        st.dataframe(filtered, use_container_width=True)
+        if st.button("Show Top Combo Details") and not filtered.empty:
+            top = filtered.sort_values(["_ts","rank"], ascending=[False, True]).iloc[0]
+            st.write({"fast": top.get("fast"), "slow": top.get("slow"), "rank": top.get("rank"), "test_sharpe": top.get("test_sharpe_like")})
 
 if run_btn:
     series = load_price_series(str(settings.paths.db_file), ticker.upper())
