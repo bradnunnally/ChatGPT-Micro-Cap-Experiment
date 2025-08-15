@@ -71,6 +71,26 @@ SCHEMA_STATEMENTS = [
         payload TEXT
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS quote_archive (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        price REAL NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS daily_prices (
+        date TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        open REAL,
+        high REAL,
+        low REAL,
+        close REAL,
+        volume REAL,
+        PRIMARY KEY (date, ticker)
+    );
+    """,
 ]
 
 # Backward-compat schema string for tests that import SCHEMA

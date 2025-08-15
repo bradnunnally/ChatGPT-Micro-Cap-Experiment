@@ -91,6 +91,7 @@ def navbar(active_page: str) -> None:
                 <a class="nav-link {'active' if active_page == Path('app.py').name else ''}" href="/" target="_self">Dashboard</a>
                 <a class="nav-link {'active' if active_page == Path('pages/performance_page.py').name else ''}" href="/performance_page" target="_self">Performance</a>
                 <a class="nav-link {'active' if active_page == Path('pages/backtest_page.py').name else ''}" href="/backtest_page" target="_self">Backtests</a>
+                <a class="nav-link {'active' if active_page == Path('pages/strategies_page.py').name else ''}" href="/strategies_page" target="_self">Strategies</a>
                 <a class="nav-link {'active' if active_page == Path('pages/user_guide_page.py').name else ''}" href="/user_guide_page" target="_self">User Guide</a>
                 <a class="nav-link {'active' if active_page == Path('pages/watchlist.py').name else ''}" href="/watchlist" target="_self">Watchlist</a>
                 {csv_link}

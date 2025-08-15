@@ -30,19 +30,20 @@ Check out the latest results in [`docs/experiment_details`](docs/experiment_deta
 
 This repository now includes a **full-featured Streamlit web application** for portfolio management and analysis.
 
-### Key Features (Phases 1–6):
-- **📱 Real-time Portfolio Dashboard** – Live tracking (Finnhub in production, synthetic in dev)
-- **📈 Performance Analytics** – Historical charts, KPIs, extended risk metrics (MDD, rolling volatility, Sharpe*, Sortino*, beta≈1 placeholder, concentration, VaR/ES 95 & 99, rolling multi-window betas, correlation matrix, VaR95 hit ratio, position VaR contributions)
-- **🧩 PnL Attribution** – In‑memory per‑position decomposition (price vs position effect) displayed on Performance page
-- **🧪 Backtest Sandbox** – SMA crossover strategy runner with equity curve & signals (see Backtests page) plus train/test overfit guard & scheduled mini SMA grid sweeps (rotating leaderboard snapshots)
-- **🎯 Price Source Provenance** – Badge + raw code (BULK/API/MANUAL/ZERO/INIT) for transparency into pricing path
-- **💰 Trading Interface** – Buy/sell stocks with validation & audit logging
-- **👁️ Watchlist Management** – Track potential investments with Money formatting
-- **💵 Money Value Object** – Centralized decimal‑safe currency handling and formatting
-- ** Data Export** – Download snapshots & history
-- **⏱️ In‑App Scheduler** – Benchmark & risk‑free refresh, portfolio snapshots, fundamentals cache, periodic SMA grid mini‑backtests, alert evaluation
-- **🚨 Risk Alerts** – Threshold alerts (drawdown, top1 concentration, VaR95) with persisted log + state panel in UI
-- **🗄️ SQLite Database** – Persistent local data storage
+### Key Features (Phases 1–7):
+ - **📱 Real-time Portfolio Dashboard** – Live tracking (Finnhub production; deterministic synthetic dev mode)
+ - **📈 Performance Analytics** – Historical charts, KPIs, extended risk (MDD, rolling vol, Sharpe*, Sortino*, placeholder beta, concentration, VaR/ES 95 & 99, rolling multi-window betas, correlation matrix, VaR95 hit ratio, position VaR contributions)
+ - **🧩 PnL Attribution** – Price vs position effect decomposition
+ - **🧪 Backtest Sandbox** – SMA crossover + rotating mini grid sweeps
+ - **🎯 Price Source Provenance** – Source badge (BULK/API/MANUAL/ZERO/INIT)
+ - **💰 Trading Interface** – Order forms, validation, trade logging
+ - **👁️ Watchlist Management** – Quick monitor & trade
+ - **💵 Money Value Object** – Decimal‑safe formatting & math
+ - **📤 Data Export** – Snapshots & trade log
+ - **⏱️ In‑App Scheduler** – Benchmarks, snapshots, fundamentals cache, mini backtests, alerts
+ - **🚨 Risk Alerts** – Drawdown, top1 concentration, VaR95 thresholds
+ - **🗄️ SQLite Database** – Local persistence layer
+ - **🧠 Multi-Strategy Allocation (Phase 7)** – Strategy registry, capital weights, composite targets, regime heuristic, order generation, execution engine (dry‑run, scaling, partial fills, slippage cost), risk overlays (ticker & sector caps)
 
 ### Quick Start (Synthetic Dev Mode):
 
@@ -198,148 +199,66 @@ pytest tests/test_portfolio_manager.py
 - **Type Hints** – Progressive typing of core & analytics modules
 - **Modular Architecture** – Clear separation (UI / services / data / analytics)
 - **Resilience & Observability** – Circuit breaker + metrics persistence for price fetching
-- **Error Handling** – Domain error taxonomy with UI-friendly surfacing
 
-## � Logging & Errors
+## 🧪 Multi-Strategy Allocation (Phase 7)
 
-This project emits structured JSON logs to stdout for easy ingestion and analysis.
+Phase 7 adds a complete multi‑strategy portfolio construction and execution loop:
 
-- Format: one JSON object per line, including timestamp, level, message, logger, and correlation_id.
-- Correlation ID: a stable ID is set per Streamlit session; CLI tools generate a new one per run. You can also set a temporary ID via a context manager for specific actions.
-- Audit Trail: trades and domain events are recorded via an audit logger for traceability.
+Core modules:
+- `services/strategy.py` – Registry, capital weighting, combination, delta & order generation, weight capping utilities
+- `services/regime.py` – Lightweight regime classifier (bull / bear / high_vol / sideways / unknown)
+- `services/rebalance.py` – Order execution engine (scaling, partial fills, slippage modeling, trade logging)
+- `pages/strategies_page.py` – Streamlit UI for end‑to‑end workflow
 
-Key APIs
-- Logging helpers live in `infra/logging.py`:
-    - `get_logger(name)`: standard JSON logger
-    - `get_correlation_id()`, `set_correlation_id(cid)`, `new_correlation_id()`
-    - `audit.trade(action, *, ticker, shares, price, status="success", reason=None, **extra)`
-    - `audit.event(name, **attrs)`
+Implemented capabilities:
+1. Strategy Registry
+  - Register/unregister strategies (equal-weight + top‑N momentum reference implementations)
+  - Toggle active status & set per‑strategy capital weights (auto-normalized)
+  - Persistence to SQLite (`strategy_registry` table) with parameter round‑trip
+2. Allocation Combination
+  - Capital‑weighted blend of raw strategy targets → composite weights
+  - Normalization over positive weights; fallback to absolute sum if all non‑positive
+3. Risk & Constraints (initial overlays)
+  - Per‑ticker max weight cap (`cap_composite_weights`)
+  - Sector aggregate cap (`apply_sector_caps`) with proportional re-scaling when breached
+4. Regime Awareness
+  - Heuristic regime detection surfaced in UI
+  - One‑click regime heuristic to adjust capital weights (e.g., damp momentum in high_vol)
+5. Delta & Order Pipeline
+  - Compute per‑ticker value & shares deltas vs targets (`compute_allocation_deltas`)
+  - Materiality filters: min shares, min value, weight tolerance (`generate_rebalance_orders`)
+6. Execution Engine
+  - Proportional scaling of buys if aggregate cost exceeds cash
+  - Optional partial fills for insufficient cash / shares
+  - Dry‑run mode (no state mutation or trade log writes)
+  - Slippage (bps) adjustment and slippage cost attribution per order
+  - Trade log integration (persisted via existing `append_trade_log`)
+7. UI Integration
+  - Strategy management, regime display, capital input controls
+  - Composite allocation & per‑strategy contribution detail
+  - Orders preview + execution panel (slippage, partials, scaling, dry‑run)
+8. Test Coverage
+  - Unit tests for registry, regime fallback, delta→orders, execution flow, caps, slippage cost
 
-Domain Errors
-- Centralized in `core/errors.py` and used across services/UI/CLI:
-    - `ValidationError` (subclasses `ValueError`) – invalid user/model input
-    - `MarketDataDownloadError` (subclasses `RuntimeError`) – download failures
-    - `NoMarketDataError` (subclasses `ValueError`) – no market data available
-    - `RepositoryError` (subclasses `RuntimeError`) – DB/repository failures
-    - `ConfigError`, `NotFoundError`, `PermissionError` – additional categories
-- Legacy shim: `services/exceptions/validation.ValidationError` aliases `core.errors.ValidationError` for backward compatibility.
+Example (minimal):
+```python
+from services.strategy import (
+   StrategyContext, EqualWeightStrategy, TopNPriceMomentumStrategy,
+   register_strategy, combine_strategy_targets, compute_allocation_deltas,
+   generate_rebalance_orders
+)
+from services.rebalance import execute_orders
 
-Usage conventions
-- Always raise domain-specific exceptions from services.
-- UI/CLI layers should catch domain errors, log them (JSON), surface user-friendly messages, and avoid raw tracebacks in logs.
-- Streamlit app seeds a session-level `correlation_id` so logs from interactions can be traced end-to-end.
-
-Example patterns (conceptual)
-- Create a logger: `logger = get_logger(__name__)`
-- Emit audit entry: `audit.trade("buy", ticker="AAPL", shares=10, price=150.0, status="success")`
-- Set a scoped correlation ID in scripts: `with new_correlation_id(): ...`
-
-## �🔧 Configuration
-
-The application uses SQLite for data storage in the `data/` directory. Configuration options are available in:
-- `.streamlit/config.toml` - Streamlit app configuration and theming
-- `pytest.ini` - Test configuration and coverage settings
-
-## 📖 Usage Guide
-
-### First Time Setup:
-1. **Launch Application**: Run `streamlit run app.py`
-2. **Add Initial Cash**: Use the cash management section to fund your account
-3. **Start Trading**: Buy your first stocks using the trading interface
-4. **Track Performance**: Monitor your portfolio's performance over time
-
-### Daily Workflow:
-- **Monitor Dashboard** – Positions, weights, ROI %, price source badges
-- **Review Watchlist** – Track candidates with live/synthetic prices
-- **Execute Trades** – Use trading forms (PnL updates in snapshot)
-- **Analyze Performance** – Performance page: KPIs, extended risk, attribution table
-- **Run Backtests** – Backtests page: choose ticker or TOTAL equity, set SMA windows
-- **Export / Archive** – CLI or UI export for history snapshots
-
-### Backtests Page
-The Backtests page lets you experiment with a simple SMA crossover strategy:
-1. Select a ticker (or use `TOTAL` to treat portfolio equity as the price series)
-2. Choose fast / slow moving average windows
-3. Run to view equity curve, performance metrics, and signal table
-
-### Risk, Benchmark & Attribution
-Risk metrics include:
-- Max Drawdown, Rolling 20d Volatility, Sharpe (excess over daily risk-free), Sortino (excess downside), Beta (vs benchmark), Top 1 / Top 3 concentration.
-    - Benchmark: Daily closes for SPY pulled from Stooq (no key) and cached locally under `data/benchmarks/SPY.json` (auto-refresh first access per UTC day or via CLI).
-    - Risk-Free: Layered resolution: FRED 3M T-Bill (DGS3MO) if `FRED_API_KEY` set → `RISK_FREE_ANNUAL` environment override → 0.0. Cached per day at `data/risk_free.json`.
-    - Daily risk-free used = annual / 252. Sharpe & Sortino use excess returns (return - rf_daily).
-    - Beta falls back to self-beta (~1) if insufficient overlapping history ( <5 aligned daily points).
-PnL attribution decomposes per-position change into:
-- `pnl_price`: Prior shares * (Δ average cost proxy)
-- `pnl_position`: (Δ shares) * current buy price proxy
-- `pnl_total_attr`: Sum of the two (in-memory only; not persisted to DB yet)
-
-#### Benchmark & Risk-Free CLI Helpers
-```bash
-make cli-benchmark   # Force benchmark refresh (SPY)
-make cli-risk-free   # Show today's resolved risk-free annual rate
-```
-Environment overrides:
-```bash
-export FRED_API_KEY=YOUR_KEY_HERE
-export RISK_FREE_ANNUAL=0.04   # 4% assumed annual rate if FRED not configured
+register_strategy(EqualWeightStrategy())
+register_strategy(TopNPriceMomentumStrategy(top_n=3))
+ctx = StrategyContext(as_of=pd.Timestamp.utcnow(), portfolio=portfolio_df, prices=latest_prices_df)
+alloc_long = combine_strategy_targets(ctx=ctx, strategy_capital={"equal_weight":0.5, "mom_top3":0.5})
+delta = compute_allocation_deltas(portfolio_df, alloc_long, price_map, total_equity)
+orders = generate_rebalance_orders(delta, min_shares=1, min_value=5.0, weight_tolerance=0.001)
+new_pf, new_cash, report = execute_orders(portfolio_df, cash, orders, slippage_bps=5)
 ```
 
-### Price Source Codes
-| Code | Meaning |
-|------|---------|
-| BULK | Bulk price fetch succeeded |
-| API | Individual API fallback |
-| MANUAL | User-entered override |
-| ZERO | No price found → 0.0 placeholder |
-| INIT | Initial placeholder before resolution |
-
-Badges appear beside each position for rapid provenance inspection.
-
-### Money Handling
-`services/money.py` supplies a `Money` value object and `format_money` helper for consistent rounding (quantized to cents) across Dashboard, Watchlist, and Performance KPIs.
-
-## 🚨 Important Notes
-
-- **Live Market Data (production)**: Finnhub quotes subject to plan limits
-- **Synthetic Mode**: Guarantees zero external calls (`APP_ENV=dev_stage`)
-- **Data Persistence**: All portfolio data stored locally (SQLite)
-- **Risk Management**: Always maintain appropriate position sizing and risk controls
-- **Educational Purpose**: This application is for educational and experimental use
-
-## 📌 Benchmark & Risk-Free Summary
-
-| Component  | Default | Source            | Cache Path                     | Refresh                                |
-|------------|---------|-------------------|--------------------------------|----------------------------------------|
-| Benchmark  | SPY     | Stooq daily CSV   | `data/benchmarks/SPY.json`     | Auto (first access per day) / CLI      |
-| Risk-Free  | DGS3MO  | FRED (if API key) | `data/risk_free.json`          | Auto (first access per day) / CLI      |
-
-Fallback chain for risk-free: FRED → `RISK_FREE_ANNUAL` env (decimal) → 0.0. Daily equivalent = annual / 252.
-
-## 📈 Experiment Status
-
-**Timeline**: June 2025 - December 2025  
-**Starting Capital**: $100  
-**Current Status**: Active trading with performance tracking  
-**Updates**: Weekly performance reports published on [SubStack](https://nathanbsmith729.substack.com)
-
-## 🤝 Contributing
-
-Feel free to:
-- Report bugs or suggest improvements
-- Submit pull requests for new features
-- Use this as a blueprint for your own experiments
-- Share feedback and results
-
-## 📞 Contact
-
-- **Email**: nathanbsmith.business@gmail.com
-- **Blog**: [SubStack Updates](https://substack.com/@nathanbsmith)
-- **Issues**: GitHub Issues for bug reports and feature requests
-
----
-
-*Disclaimer: This is an experimental project for educational purposes. Past performance does not guarantee future results. Please invest responsibly.*
+Next phase ideas: volatility targeting, advanced factor momentum overlays, liquidity & turnover constraints, scenario stress testing, adaptive regime weight models.
 
 ## 📦 Local Snapshot Deployment (No Docker)
 

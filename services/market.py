@@ -8,6 +8,7 @@ import threading
 import pandas as pd
 import streamlit as st
 import requests
+import sqlite3
 
 from config import get_provider, is_dev_stage
 try:  # micro provider always expected now; keep defensive import
@@ -349,12 +350,16 @@ def fetch_price(ticker: str) -> float | None:
     if prov:
         try:
             q = prov.get_quote(ticker)
-            return q.get("price") if q else None
+            price = q.get("price") if q else None
+            if price is not None:
+                _archive_quote(ticker, float(price))
+            return price
         except Exception:  # pragma: no cover - defensive
             pass
     if is_dev_stage() and not _legacy_market_test_mode() and not _skip_synthetic_for_tests():
         syn = _get_synthetic_close(ticker)
         if syn is not None:
+            _archive_quote(ticker, float(syn))
             return syn
     # Micro provider already attempted; no legacy network fallback.
     return None
@@ -378,7 +383,10 @@ def fetch_prices(tickers: list[str]) -> pd.DataFrame:
         for t in tickers:
             try:
                 q = prov.get_quote(t) or {}
-                rows.append({"ticker": t, "current_price": q.get("price"), "pct_change": q.get("percent")})
+                price = q.get("price")
+                if price is not None:
+                    _archive_quote(t, float(price))
+                rows.append({"ticker": t, "current_price": price, "pct_change": q.get("percent")})
                 _metrics["price_fetch_bulk_success"] += 1
                 _persist_metrics()
             except Exception:
@@ -480,6 +488,7 @@ def get_current_price(ticker: str) -> float | None:
             q = prov.get_quote(ticker)
             price = q.get("price") if q else None
             if price is not None and price > 0:
+                _archive_quote(ticker, float(price))
                 return price
         except Exception:  # pragma: no cover
             pass
@@ -494,13 +503,16 @@ def get_current_price(ticker: str) -> float | None:
                 if close_col:
                     close_prices = hist[close_col].dropna()
                     if not close_prices.empty:
-                        return float(close_prices.iloc[-1])
+                        val = float(close_prices.iloc[-1])
+                        _archive_quote(ticker, float(val))
+                        return val
         except Exception:
             return None
     # Final fallback: try synthetic again (in case env flipped mid-run) then give up.
     if is_dev_stage():  # final synthetic attempt
         syn = _get_synthetic_close(ticker)
         if syn is not None:
+            _archive_quote(ticker, float(syn))
             return syn
 
     return None
@@ -620,6 +632,106 @@ def validate_ticker_format(ticker: str) -> bool:
         return False
     pattern = r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$"  # pragma: no cover (regex construction trivial)
     return re.match(pattern, ticker) is not None
+
+
+# ---------------- Quote archival & daily rollup utilities -------------------
+
+def _archive_quote(ticker: str, price: float) -> None:
+    """Persist a point-in-time quote in quote_archive.
+
+    Best-effort: swallow errors (e.g., during tests with patched sqlite).
+    """
+    try:
+        from app_settings import settings as _settings  # local import to avoid cycles
+        ts = pd.Timestamp.utcnow().isoformat()
+        conn = sqlite3.connect(_settings.paths.db_file)
+        conn.execute(
+            "INSERT INTO quote_archive (timestamp, ticker, price) VALUES (?,?,?)",
+            (ts, ticker.upper(), float(price)),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:  # pragma: no cover - non critical
+        pass
+
+def rollup_daily_prices(for_date: str | None = None) -> int:
+    """Aggregate intraday quotes into daily OHLC rows in daily_prices.
+
+    Returns number of upserted rows. Idempotent for a given date & ticker.
+    """
+    try:
+        from app_settings import settings as _settings
+        conn = sqlite3.connect(_settings.paths.db_file)
+        if for_date is None:
+            # Use date in UTC to avoid timezone complexity; business logic can adapt later
+            for_date = pd.Timestamp.utcnow().strftime("%Y-%m-%d")
+        # Select all quotes for that date (UTC date substring)
+        df = pd.read_sql_query(
+            "SELECT * FROM quote_archive WHERE substr(timestamp,1,10)=?",
+            conn,
+            params=(for_date,),
+            parse_dates=["timestamp"],
+        )
+        if df.empty:
+            conn.close()
+            return 0
+        df["ticker"] = df["ticker"].str.upper()
+        rows = []
+        for t, grp in df.groupby("ticker"):
+            prices = grp.sort_values("timestamp")["price"].astype(float)
+            o = float(prices.iloc[0])
+            h = float(prices.max())
+            l = float(prices.min())
+            c = float(prices.iloc[-1])
+            rows.append((for_date, t, o, h, l, c, None))
+        # Upsert rows
+        upsert_sql = (
+            "INSERT INTO daily_prices (date, ticker, open, high, low, close, volume) "
+            "VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(date, ticker) DO UPDATE SET open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close"
+        )
+        cur = conn.executemany(upsert_sql, rows)
+        conn.commit()
+        count = cur.rowcount if cur.rowcount is not None else len(rows)
+        conn.close()
+        return count
+    except Exception:  # pragma: no cover
+        return 0
+
+def get_daily_price_series(ticker: str, limit: int | None = None) -> pd.DataFrame:
+    """Return historical daily OHLC for ticker from daily_prices table.
+
+    If table empty for ticker, attempt synthetic fallback by constructing a single close row
+    from last archived quote (useful in early sessions).
+    """
+    try:
+        from app_settings import settings as _settings
+        conn = sqlite3.connect(_settings.paths.db_file)
+        sql = "SELECT date, open, high, low, close, volume FROM daily_prices WHERE ticker=? ORDER BY date"
+        params = (ticker.upper(),)
+        df = pd.read_sql_query(sql, conn, params=params, parse_dates=["date"])
+        conn.close()
+        if df.empty:
+            # fallback: last quote
+            conn = sqlite3.connect(_settings.paths.db_file)
+            qdf = pd.read_sql_query(
+                "SELECT * FROM quote_archive WHERE ticker=? ORDER BY timestamp DESC LIMIT 1",
+                conn,
+                params=(ticker.upper(),),
+                parse_dates=["timestamp"],
+            )
+            conn.close()
+            if not qdf.empty:
+                last_price = float(qdf.iloc[0]["price"])
+                day = qdf.iloc[0]["timestamp"].strftime("%Y-%m-%d")
+                return pd.DataFrame(
+                    [{"date": pd.Timestamp(day), "open": last_price, "high": last_price, "low": last_price, "close": last_price, "volume": None}]
+                )
+        if limit and not df.empty:
+            return df.tail(limit).reset_index(drop=True)
+        return df.reset_index(drop=True)
+    except Exception:  # pragma: no cover
+        return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
 
 
 def sanitize_market_data(df: pd.DataFrame) -> pd.DataFrame:

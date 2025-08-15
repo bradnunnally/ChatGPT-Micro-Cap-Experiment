@@ -138,6 +138,7 @@ def build_default_scheduler() -> Scheduler:
     from strategies.grid import run_sma_grid, summarize_results
     import pandas as pd
     import sqlite3
+    from services.market import rollup_daily_prices
 
     sched = Scheduler()
 
@@ -207,6 +208,13 @@ def build_default_scheduler() -> Scheduler:
         except Exception:  # pragma: no cover
             pass
 
+    def daily_rollup_job():
+        # Aggregate archived quotes into daily OHLC (idempotent)
+        try:
+            rollup_daily_prices()
+        except Exception:  # pragma: no cover
+            pass
+
     # Registration (stagger intervals)
     sched.add_interval_job("benchmark_refresh", benchmark_job, seconds=day)
     sched.add_interval_job("risk_free_refresh", risk_free_job, seconds=day)
@@ -215,6 +223,7 @@ def build_default_scheduler() -> Scheduler:
     sched.add_interval_job("risk_metrics_refresh", risk_metrics_job, seconds=hour)
     sched.add_interval_job("grid_sma_backtest", grid_backtest_job, seconds=hour * 6)
     sched.add_interval_job("alerts_eval", alerts_job, seconds=fifteen_min)
+    sched.add_interval_job("daily_price_rollup", daily_rollup_job, seconds=day)
 
     return sched
 

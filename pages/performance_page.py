@@ -22,6 +22,9 @@ from services.risk_free import get_risk_free_rate
 from services.money import format_money
 from services.fundamentals import batch_get_fundamentals
 from services.alerts import load_alert_state
+from services.factors import factors_summary, get_factor_returns, DEFAULT_FACTORS
+from services.market import get_daily_price_series
+from services.attribution import compute_factor_attribution, compute_position_contributions
 
 st.set_page_config(page_title="Performance", layout="wide", initial_sidebar_state="collapsed")
 
@@ -384,6 +387,91 @@ def main() -> None:
             import plotly.express as px
             fig_corr = px.line(avg_corr.reset_index(), x="date", y=avg_corr.name, title="Avg Pairwise Correlation (30d)")
             st.plotly_chart(fig_corr, use_container_width=True)
+
+    # Daily OHLC Rollup Viewer (from archived quotes)
+    with st.expander("Daily OHLC (Archived Quotes Rollup)"):
+        tickers = sorted([t for t in history["ticker"].unique() if t not in {"TOTAL"}])
+        if not tickers:
+            st.caption("No tickers in history to show OHLC data.")
+        else:
+            sel = st.multiselect("Select tickers", tickers, default=tickers[:1])
+            limit = st.number_input("Rows (tail)", min_value=5, max_value=500, value=60, step=5)
+            show_chart = st.checkbox("Show candlestick chart", value=True, key="show_candle")
+            import plotly.graph_objects as _go
+            tabs = st.tabs(sel) if sel else []
+            for t, tab in zip(sel, tabs):
+                with tab:
+                    df_o = get_daily_price_series(t, limit=int(limit))
+                    if df_o.empty:
+                        st.caption("No daily rollup data yet for this ticker.")
+                        continue
+                    st.dataframe(df_o.tail(int(limit)), use_container_width=True)
+                    if show_chart and {"open","high","low","close"}.issubset(df_o.columns):
+                        cfig = _go.Figure(data=[_go.Candlestick(x=df_o["date"], open=df_o["open"], high=df_o["high"], low=df_o["low"], close=df_o["close"])])
+                        cfig.update_layout(height=320, margin=dict(l=10,r=10,t=30,b=10), title=f"{t} Daily OHLC")
+                        st.plotly_chart(cfig, use_container_width=True)
+
+    # Factor / Style ETF Summary Panel
+    with st.expander("Factor Summary (ETF Proxies)"):
+        # Provide user control to limit symbols
+        default_syms = DEFAULT_FACTORS
+        sel = st.multiselect("Factor symbols", default_syms, default_syms)
+        if not sel:
+            st.caption("Select at least one factor symbol.")
+        else:
+            try:
+                summary = factors_summary(sel)
+            except Exception:
+                summary = {}
+            if not summary:
+                st.caption("No factor data cached yet (will populate after background refresh / first access).")
+            else:
+                rows = []
+                for k, v in summary.items():
+                    rows.append({
+                        "Symbol": k,
+                        "Points": v.get("points"),
+                        "Start": v.get("start"),
+                        "End": v.get("end"),
+                        "Mean Daily %": round(v.get("mean_daily", 0)*100, 3) if v.get("mean_daily") is not None else None,
+                        "Vol Daily %": round(v.get("vol_daily", 0)*100, 3) if v.get("vol_daily") is not None else None,
+                    })
+                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+                # Optional correlation of factor daily returns
+                if st.checkbox("Show factor return correlation", value=False, key="factor_corr"):
+                    try:
+                        rets = get_factor_returns(sel)
+                        if rets:
+                            ret_df = pd.DataFrame(rets)
+                            corr = ret_df.corr().round(2)
+                            st.dataframe(corr, use_container_width=True)
+                    except Exception:
+                        st.caption("Unable to compute factor correlations (insufficient data yet).")
+
+    # Factor Attribution Panel
+    with st.expander("Factor Attribution (Beta & Contribution)"):
+        factor_syms = st.multiselect("Select factors", DEFAULT_FACTORS, DEFAULT_FACTORS[:3], key="attr_factors")
+        window = st.number_input("Window (recent days, 0=all)", min_value=0, max_value=500, value=120, step=10)
+        attr = compute_factor_attribution(history, factor_symbols=factor_syms, window=(window or None)) if factor_syms else None
+        if attr is None:
+            st.caption("Insufficient overlapping history to compute factor attribution.")
+        else:
+            beta_df = pd.DataFrame({"beta": attr.betas, "cum_return": attr.factor_cum_returns, "contribution": attr.factor_contributions, "contribution_pct": attr.contributions_pct}).sort_values("contribution", ascending=False)
+            beta_df["cum_return_pct"] = beta_df["cum_return"] * 100.0
+            beta_df["contribution_pct"] = beta_df["contribution_pct"].round(2)
+            st.dataframe(beta_df[["beta","cum_return_pct","contribution","contribution_pct"]].round(4), use_container_width=True)
+            st.metric("Residual %", f"{attr.residual_pct:.2f}%")
+            st.caption("Betas estimated via OLS (no intercept) over selected window; contributions = beta * factor cumulative return. Residual is unexplained portion.")
+
+    # Position Contribution Panel
+    with st.expander("Position Return Contributions"):
+        pos_window = st.number_input("Window (days)", min_value=20, max_value=365, value=60, step=10, key="pos_window")
+        contrib_df = compute_position_contributions(history, window=pos_window)
+        if contrib_df.empty:
+            st.caption("Need position history to compute contributions.")
+        else:
+            st.dataframe(contrib_df.round(2), use_container_width=True)
 
     # Alerts State
     with st.expander("Alerts State"):
