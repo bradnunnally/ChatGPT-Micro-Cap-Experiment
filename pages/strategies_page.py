@@ -16,6 +16,17 @@ from services.strategy import (
     load_strategy_registry,
     generate_rebalance_orders,
 )
+from services.optimization import (
+    register_phase9_strategies,
+    MeanVarianceStrategy,
+    RiskParityStrategy,
+    factor_neutral_overlay,
+    apply_turnover_penalty,
+    apply_volatility_cap,
+    compute_factor_exposures,
+    regime_risk_overlay,  # added
+)
+from services.factors import get_factor_returns, DEFAULT_FACTORS
 from services.regime import detect_regime
 from services.market import fetch_prices
 from services.rebalance import execute_orders
@@ -35,6 +46,9 @@ if "_strategies_loaded" not in st.session_state:
 if not any(s.name == "equal_weight" for s in list_strategies(active_only=False)):
     register_strategy(EqualWeightStrategy(), active=True, replace=False)
 
+# Register Phase 9 optimization strategies (idempotent)
+register_phase9_strategies()
+
 # Simple form to add a momentum strategy instance
 with st.expander("Add Momentum Strategy"):
     col1, col2 = st.columns(2)
@@ -44,6 +58,15 @@ with st.expander("Add Momentum Strategy"):
         name = custom_name.strip() or None
         register_strategy(TopNPriceMomentumStrategy(top_n=int(top_n), name=name), active=True)
         st.success("Strategy added")
+
+with st.expander("Add Optimization Strategies"):
+    col_a, col_b = st.columns(2)
+    if col_a.button("Add Mean-Variance"):
+        register_strategy(MeanVarianceStrategy(), active=True)
+        st.success("Mean-Variance strategy added")
+    if col_b.button("Add Risk Parity"):
+        register_strategy(RiskParityStrategy(), active=True)
+        st.success("Risk Parity strategy added")
 
 all_strats = list_strategies(active_only=False)
 if not all_strats:
@@ -120,6 +143,149 @@ else:
         if alloc_long.empty:
             st.info("No allocation output.")
         else:
+            # Capture pre-overlay composite weights snapshot for diagnostics
+            pre_overlay_weights = {r.ticker: r.composite_weight for r in alloc_long.drop_duplicates('ticker').itertuples()}
+            # Optional Factor Neutral & Turnover Adjustments
+            with st.expander("Phase 9 Optimization Overlays", expanded=False):
+                turnover_pen = st.number_input("Turnover Penalty (λ)", min_value=0.0, value=0.0, step=0.1)
+                cost_bps = st.number_input("Assumed Cost (bps)", min_value=0.0, value=10.0, step=1.0)
+                col_fn1, col_fn2 = st.columns(2)
+                apply_factor_neutral = col_fn1.checkbox(
+                    "Factor Neutralization", value=False,
+                    help="Neutralize selected factor ETF return exposures via projection (rolling betas)."
+                )
+                selected_factors = []
+                if apply_factor_neutral:
+                    default_sel = DEFAULT_FACTORS[:3]
+                    selected_factors = col_fn2.multiselect(
+                        "Factors", DEFAULT_FACTORS, default_sel,
+                        help="Select factor/style ETF proxies to neutralize."
+                    )
+                vol_cap_enabled = st.checkbox("Volatility Cap", value=False)
+                target_vol = None
+                if vol_cap_enabled:
+                    target_vol = st.number_input("Target Max Annual Vol (%)", min_value=1.0, max_value=100.0, value=15.0, step=1.0)
+                apply_regime_scale = st.checkbox("Regime Risk Scaling", value=False, help="Uniformly scale risk based on detected market regime (reduces gross exposure in high_vol/bear).")
+            # Build composite weights dict to apply overlays
+            base_comp = alloc_long.drop_duplicates("ticker")["ticker"].to_list()
+            comp_map = {r.ticker: r.composite_weight for r in alloc_long.drop_duplicates('ticker').itertuples()}
+            # Turnover penalty vs current weights (approx current portfolio weights)
+            current_weights = {}
+            if not portfolio_df.empty and 'shares' in portfolio_df.columns and 'ticker' in portfolio_df.columns:
+                pv = portfolio_df.copy()
+                if 'price' in pv.columns:
+                    pv['current_value'] = pv['shares'].astype(float) * pv['price'].astype(float)
+                elif 'buy_price' in pv.columns:
+                    pv['current_value'] = pv['shares'].astype(float) * pv['buy_price'].astype(float)
+                else:
+                    pv['current_value'] = 0.0
+                totv = pv['current_value'].sum()
+                if totv > 0:
+                    current_weights = {row.ticker: float(row.current_value / totv) for row in pv.itertuples()}
+            if turnover_pen > 0:
+                comp_map = apply_turnover_penalty(current_weights, comp_map, cost_bps=cost_bps, penalty=turnover_pen, long_only=True)
+            # Factor neutralization using rolling betas vs selected factor ETFs
+            if apply_factor_neutral and selected_factors:
+                # Build returns history (asset & factors) if available
+                returns_hist = ctx.extra.get('returns_history') if ctx.extra else None
+                factor_rets_dict = get_factor_returns(selected_factors)
+                if returns_hist is not None and not returns_hist.empty and factor_rets_dict:
+                    fac_df = pd.DataFrame(factor_rets_dict).dropna(how='all')
+                    # Align asset subset to weights universe
+                    asset_cols = [c for c in returns_hist.columns if c in comp_map]
+                    asset_ret_sub = returns_hist[asset_cols].dropna(how='all')
+                    exposures = compute_factor_exposures(asset_ret_sub, fac_df)
+                    if not exposures.empty:
+                        comp_map = factor_neutral_overlay(comp_map, exposures, exposures.columns, long_only=True)
+                else:
+                    st.caption("Factor neutralization skipped (insufficient asset or factor return history yet).")
+            # Regime risk overlay scaling BEFORE volatility cap so vol cap sees scaled exposure
+            if 'apply_regime_scale' in locals() and apply_regime_scale:
+                comp_map = regime_risk_overlay(comp_map, regime_label)
+            # Volatility cap scaling (introduces implicit cash if scaling <1)
+            if vol_cap_enabled and target_vol:
+                returns_hist = ctx.extra.get('returns_history') if ctx.extra else None
+                scaled = apply_volatility_cap(comp_map, returns_hist, target_vol)
+                if scaled:
+                    comp_map = scaled
+            # Sanity: remove NaN / inf and renormalize; if empty fallback to original snapshot
+            import math
+            cleaned = {k: float(v) for k, v in comp_map.items() if v is not None and not math.isinf(v) and not math.isnan(v) and v >= 0}
+            tot_clean = sum(cleaned.values())
+            if tot_clean > 0:
+                cleaned = {k: v / tot_clean for k, v in cleaned.items() if v > 0}
+            if not cleaned:
+                cleaned = pre_overlay_weights  # revert
+            comp_map = cleaned
+            # Write back adjusted composite weights into alloc_long
+            alloc_long = alloc_long.merge(pd.Series(comp_map, name='adj_weight'), left_on='ticker', right_index=True, how='left')
+            alloc_long['composite_weight'] = alloc_long['adj_weight'].fillna(alloc_long['composite_weight'])
+            alloc_long = alloc_long.drop(columns=['adj_weight'])
+            # Diagnostics panel
+            with st.expander("Optimization Diagnostics", expanded=False):
+                # Expected returns & covariance estimation (ad hoc from context extra returns_history if available)
+                returns_hist = ctx.extra.get('returns_history') if ctx.extra else None
+                if returns_hist is not None and not returns_hist.empty:
+                    # Provide simple stats
+                    tail = returns_hist.tail(120)  # limit
+                    mu_vec = tail.mean().to_frame(name='exp_ret_daily')
+                    vol_vec = tail.std(ddof=0).to_frame(name='vol_daily')
+                    diag_df = mu_vec.join(vol_vec)
+                    st.markdown("**Estimated Return / Vol (daily)**")
+                    st.dataframe(diag_df, use_container_width=True)
+                    # Correlation matrix (small sets only)
+                    if diag_df.shape[0] <= 25:
+                        corr = tail.corr()
+                        st.markdown("**Correlation Matrix**")
+                        st.dataframe(corr, use_container_width=True)
+                    # Portfolio volatility pre/post (using latest weights)
+                    try:
+                        active_cols = [c for c in tail.columns if c in pre_overlay_weights]
+                        if len(active_cols) >= 2:
+                            import math
+                            pre_w = pd.Series(pre_overlay_weights)
+                            pre_w = pre_w[active_cols] / pre_w[active_cols].sum()
+                            cov_tail = tail[active_cols].cov().fillna(0.0)
+                            pre_var = float(pre_w.values @ cov_tail.loc[pre_w.index, pre_w.index].values @ pre_w.values)
+                            pre_vol_ann = math.sqrt(pre_var) * math.sqrt(252)
+                            post_w = pd.Series(comp_map)
+                            post_w = post_w[active_cols] / post_w[active_cols].sum()
+                            post_var = float(post_w.values @ cov_tail.loc[post_w.index, post_w.index].values @ post_w.values)
+                            post_vol_ann = math.sqrt(post_var) * math.sqrt(252)
+                            # If regime scaling applied, also display gross exposure factor
+                            gross_exposure = sum(comp_map.values())
+                            st.caption(f"Annual Vol (pre overlays): {pre_vol_ann*100:.2f}% | (post overlays): {post_vol_ann*100:.2f}% | Gross Exposure: {gross_exposure:.2f}")
+                    except Exception:
+                        pass
+                else:
+                    st.caption("No returns history in context (use future Phase 9 data plumbing). Showing weights deltas only.")
+                # Weight delta (pre vs post overlays)
+                weight_delta_rows = []
+                for t, pre_w in pre_overlay_weights.items():
+                    post_w = comp_map.get(t, 0.0)
+                    weight_delta_rows.append({"ticker": t, "pre_weight": pre_w, "post_weight": post_w, "delta": post_w - pre_w})
+                wd_df = pd.DataFrame(weight_delta_rows).sort_values('delta', ascending=False)
+                st.markdown("**Weight Adjustments (Pre vs Post Overlays)**")
+                st.dataframe(wd_df, use_container_width=True)
+                # Factor exposure diagnostics if factors neutralized
+                if 'selected_factors' in locals() and selected_factors:
+                    try:
+                        factor_rets_dict = get_factor_returns(selected_factors)
+                        if factor_rets_dict and returns_hist is not None and not returns_hist.empty:
+                            fac_df = pd.DataFrame(factor_rets_dict).dropna(how='all')
+                            asset_cols = [c for c in returns_hist.columns if c in pre_overlay_weights]
+                            asset_ret_sub = returns_hist[asset_cols].dropna(how='all')
+                            exposures_pre = compute_factor_exposures(asset_ret_sub, fac_df)
+                            if not exposures_pre.empty:
+                                # Aggregate portfolio beta = sum_i w_i * beta_i
+                                beta_pre = (pd.Series(pre_overlay_weights) @ exposures_pre).reindex(fac_df.columns, fill_value=0)
+                                exposures_post = compute_factor_exposures(asset_ret_sub, fac_df)
+                                beta_post = (pd.Series(comp_map) @ exposures_post).reindex(fac_df.columns, fill_value=0)
+                                betas_df = pd.DataFrame({"pre_beta": beta_pre, "post_beta": beta_post})
+                                st.markdown("**Portfolio Factor Betas (Pre vs Post)**")
+                                st.dataframe(betas_df, use_container_width=True)
+                    except Exception:
+                        pass
             # Build deltas
             price_map = {r.ticker: r.current_price for r in price_df.itertuples()} if not price_df.empty else {}
             total_equity = float(getattr(st.session_state, 'cash', 0.0))

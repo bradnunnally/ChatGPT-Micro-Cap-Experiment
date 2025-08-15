@@ -30,7 +30,7 @@ Check out the latest results in [`docs/experiment_details`](docs/experiment_deta
 
 This repository now includes a **full-featured Streamlit web application** for portfolio management and analysis.
 
-### Key Features (Phases 1–7):
+### Key Features (Phases 1–9):
  - **📱 Real-time Portfolio Dashboard** – Live tracking (Finnhub production; deterministic synthetic dev mode)
  - **📈 Performance Analytics** – Historical charts, KPIs, extended risk (MDD, rolling vol, Sharpe*, Sortino*, placeholder beta, concentration, VaR/ES 95 & 99, rolling multi-window betas, correlation matrix, VaR95 hit ratio, position VaR contributions)
  - **🧩 PnL Attribution** – Price vs position effect decomposition
@@ -44,6 +44,7 @@ This repository now includes a **full-featured Streamlit web application** for p
  - **🚨 Risk Alerts** – Drawdown, top1 concentration, VaR95 thresholds
  - **🗄️ SQLite Database** – Local persistence layer
  - **🧠 Multi-Strategy Allocation (Phase 7)** – Strategy registry, capital weights, composite targets, regime heuristic, order generation, execution engine (dry‑run, scaling, partial fills, slippage cost), risk overlays (ticker & sector caps)
+ - **🧮 Advanced Optimization (Phase 9)** – Mean-Variance, Risk Parity, Min-Variance, Constrained Risk Parity strategies; factor exposure estimation & neutralization, turnover penalty, volatility cap, regime risk scaling overlay, diagnostics & profiling
 
 ### Quick Start (Synthetic Dev Mode):
 
@@ -94,7 +95,7 @@ The app will open at `http://localhost:8501` with a clean interface ready for po
 - **Database**: SQLite for reliable local data persistence
 - **Market Data**: Finnhub (production) or deterministic synthetic generator (dev)
 - **Analytics Layer**: Risk metrics, PnL attribution, equity curve backtesting
-- **Testing**: Comprehensive test suite (current ≈82% coverage, target ≥80%)
+- **Testing**: Comprehensive test suite (current ≈81% coverage, target ≥80%)
 
 ## 🛠️ Technical Stack
 
@@ -259,6 +260,61 @@ new_pf, new_cash, report = execute_orders(portfolio_df, cash, orders, slippage_b
 ```
 
 Next phase ideas: volatility targeting, advanced factor momentum overlays, liquidity & turnover constraints, scenario stress testing, adaptive regime weight models.
+
+## 🔍 Advanced Optimization & Overlays (Phase 9)
+
+Phase 9 extends the allocation engine with lightweight, dependency‑minimal portfolio optimization and risk overlays designed for transparency and testability.
+
+Core module: `services/optimization.py`
+
+Implemented components:
+
+1. Strategies
+  - MeanVarianceStrategy (Σ⁻¹μ heuristic, inverse‑vol fallback when all weights collapse)
+  - RiskParityStrategy (inverse volatility approximation)
+  - MinVarianceStrategy (Σ⁻¹1 normalized; long‑only clamp)
+  - ConstrainedRiskParityStrategy (iterative equal risk contribution with max weight & convergence tolerance)
+2. Estimation Utilities
+  - `estimate_returns` (mean / EMA) & `estimate_covariance` (sample with simple shrinkage)
+  - `compute_factor_exposures` rolling OLS betas (no intercept) with stability guards (min obs, pseudo‑inverse fallback)
+3. Overlays
+  - Factor Neutralization (orthogonal projection; skips constant exposures; degeneracy fallback to original normalized weights)
+  - Turnover Penalty (L1 soft‑threshold vs current using cost_bps * λ)
+  - Volatility Cap (uniform scaling to target annual vol introducing implicit cash buffer)
+  - Regime Risk Scaling (gross exposure dampening in high_vol / bear / sideways regimes before vol targeting)
+4. Diagnostics
+  - Expected returns, daily vol, correlations, pre/post weight deltas, factor betas, pre/post portfolio annual vol, gross exposure
+5. Performance Profiling
+  - `profile_optimization_pipeline` timing breakdown (returns, covariance, strategy eval, overlays)
+6. Registration Helper
+  - `register_phase9_strategies()` idempotently registers all optimization strategies
+7. Tests & Quality
+  - Dedicated optimization test suite + smoke tests (markers) covering estimators, overlays, fallback paths, volatility cap, regime scaling
+  - Maintains overall coverage ≥80%
+
+Example (factor neutralization & volatility cap):
+```python
+from services.optimization import (
+   register_phase9_strategies, RiskParityStrategy, factor_neutral_overlay,
+   compute_factor_exposures, apply_volatility_cap
+)
+from services.strategy import StrategyContext
+
+register_phase9_strategies()
+ctx = StrategyContext(as_of=pd.Timestamp.utcnow(), extra={"returns_history": asset_returns})
+weights = RiskParityStrategy().target_weights(ctx)
+exposures = compute_factor_exposures(asset_returns, factor_returns)
+adj = factor_neutral_overlay(weights, exposures, exposures.columns)
+scaled = apply_volatility_cap(adj, asset_returns, target_annual_vol_pct=15.0)
+```
+
+Profiling:
+```python
+from services.optimization import profile_optimization_pipeline, MeanVarianceStrategy
+timings = profile_optimization_pipeline(asset_returns, [MeanVarianceStrategy()], ctx, overlays=True)
+```
+
+Future enhancements: convex solver integration for exact ERC / MV with constraints, liquidity & turnover budgeting, dynamic factor selection, adaptive shrinkage, regime‑aware target volatility, transaction cost preview UI.
 
 ## 📦 Local Snapshot Deployment (No Docker)
 

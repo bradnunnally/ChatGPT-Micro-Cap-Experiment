@@ -2,10 +2,9 @@ import streamlit as st
 
 
 def show_user_guide() -> None:
-    """Display the user guide with helpful information."""
-    with st.expander("📚 User Guide", expanded=True):
-        st.subheader("🚀 Getting Started")
-        st.markdown(
+    """Display the user guide as a full standalone page (no collapsible container)."""
+    st.subheader("🚀 Getting Started")
+    st.markdown(
             """
             Welcome to the **AI Assisted Trading Portfolio Manager** – a Streamlit application providing live (or deterministic synthetic) pricing, analytics, multi‑strategy allocation, and execution.
 
@@ -36,22 +35,23 @@ def show_user_guide() -> None:
             """
         )
 
-        st.subheader("💡 Key Features (Overview)")
-        st.markdown(
+    st.subheader("💡 Key Features (Overview)")
+    st.markdown(
             """
             - **Unified Market Data**: Finnhub (production) or deterministic synthetic (dev_stage)
             - **Multi-Strategy Allocation**: Combine strategies via capital weights
             - **Regime Heuristic**: Bull / Bear / High Vol / Sideways classification to nudge weights
             - **Execution Engine**: Scaling, partial fills, slippage bps, dry-run, trade logging
             - **Risk Overlays**: Per-ticker & sector weight caps (phase 7 foundation)
+            - **Optimization (Phase 9)**: Mean-Variance, Risk Parity, Min-Variance, Constrained Risk Parity strategies; turnover penalty, factor neutralization, volatility cap, regime risk scaling overlay, profiling diagnostics
             - **Analytics**: Extended performance & risk metrics
             - **Persistence**: SQLite storage for portfolio, history, trade_log, strategy registry
             - **Testing**: ≥80% coverage gate
             """
         )
 
-        st.subheader("�️ Risk & Overlays")
-        st.markdown(
+    st.subheader("🛡️ Risk & Overlays")
+    st.markdown(
             """
             - **Ticker Cap**: Limits composite weight of any single name
             - **Sector Cap**: Scales sector constituents when threshold exceeded
@@ -60,8 +60,8 @@ def show_user_guide() -> None:
             """
         )
 
-        st.subheader("🧠 Strategies Page Workflow")
-        st.markdown(
+    st.subheader("🧠 Strategies Page Workflow")
+    st.markdown(
             """
             1. Register strategies (Equal Weight auto, add Momentum Top-N)
             2. Set capital weights (auto-normalized)
@@ -69,14 +69,17 @@ def show_user_guide() -> None:
             4. Combine into composite allocation
             5. Review deltas & generated orders (filters: min shares/value, weight tolerance)
             6. (Optional) Apply risk overlays (ticker/sector caps)
-            7. Dry run execution (no state change) – inspect statuses & slippage
-            8. Execute to commit trades (trade log updated)
-            9. Persist configuration (registry saved to DB)
+            7. (Optional) Apply optimization overlays (turnover penalty, factor neutralization, regime risk scaling, volatility cap)
+            8. Inspect Optimization Diagnostics (expected return, vol, correlations, weight deltas, factor betas, pre/post portfolio vol, gross exposure)
+            9. (Optional) Run profiling to view timing breakdown (estimators / strategies / overlays)
+            10. Dry run execution (no state change) – inspect statuses & slippage
+            11. Execute to commit trades (trade log updated)
+            12. Persist configuration (registry saved to DB)
             """
         )
 
-        st.subheader("🔧 Technical Notes")
-        st.markdown(
+    st.subheader("🔧 Technical Notes")
+    st.markdown(
             """
             - **Synthetic Mode**: Deterministic OHLCV for reproducible tests & offline use
             - **Order Scaling**: Buys proportionally scaled if aggregate cost > cash
@@ -87,8 +90,8 @@ def show_user_guide() -> None:
             """
         )
 
-        st.subheader("📊 Data Coverage & Provider Capabilities")
-        st.markdown(
+    st.subheader("📊 Data Coverage & Provider Capabilities")
+    st.markdown(
             """
             | Mode | Source | Typical Use | Notes |
             | ---- | ------ | ----------- | ----- |
@@ -98,6 +101,16 @@ def show_user_guide() -> None:
             **Capability Detection:** Columns & metrics auto-hide when unsupported (e.g., Spread, ADV20).
 
             **Phase 7 Additions:** Strategy registry persistence, regime heuristic integration, execution slippage cost attribution, weight & sector cap overlays.
+
+            **Phase 9 Additions:**
+            - Optimization strategies (Mean-Variance Σ⁻¹μ heuristic, Risk Parity inverse-vol, Min-Variance Σ⁻¹1 normalized, Constrained Risk Parity with max weight & iterative risk contribution balancing)
+            - Turnover penalty (L1 shrink vs current weights using cost-adjusted threshold)
+            - Factor neutralization (rolling betas vs selected factor/style ETFs; constant exposures skipped; degeneracy fallback to original weights)
+            - Volatility cap (uniform scaling to target max annualized vol; implicit cash buffer)
+            - Regime risk scaling overlay (uniform gross exposure reduction in high_vol / bear regimes before vol targeting)
+            - Diagnostics panel (expected returns, daily vol, correlations, weight deltas, factor betas, pre/post portfolio vol, gross exposure)
+            - Performance profiling utility (timing: returns estimation, covariance, strategy evaluation, overlays)
+            - Factor exposure estimation via rolling OLS (no intercept) with stability safeguards
 
             **Roadmap:** Liquidity-adjusted sizing, volatility targeting, turnover constraints, adaptive regime models.
             """
