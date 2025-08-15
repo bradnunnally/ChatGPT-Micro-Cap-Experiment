@@ -40,10 +40,11 @@ def show_user_guide() -> None:
             """
             - **Unified Market Data**: Finnhub (production) or deterministic synthetic (dev_stage)
             - **Multi-Strategy Allocation**: Combine strategies via capital weights
-            - **Regime Heuristic**: Bull / Bear / High Vol / Sideways classification to nudge weights
+            - **Regime Engine (Phase 14)**: Feature extraction → probabilistic classification (Bull / Bear / High Vol / Sideways) → blended risk targets (dynamic vol & gross exposure)
             - **Execution Engine**: Scaling, partial fills, slippage bps, dry-run, trade logging
             - **Risk Overlays**: Per-ticker & sector weight caps (phase 7 foundation)
             - **Optimization (Phase 9)**: Mean-Variance, Risk Parity, Min-Variance, Constrained Risk Parity strategies; turnover penalty, factor neutralization, volatility cap, regime risk scaling overlay, profiling diagnostics
+            - **Turnover Budget (Phase 14 add-on)**: Rolling window % of average equity cap with pre‑trade blocking & ledger (see section below)
             - **Analytics**: Extended performance & risk metrics
             - **Persistence**: SQLite storage for portfolio, history, trade_log, strategy registry
             - **Testing**: ≥80% coverage gate
@@ -57,6 +58,7 @@ def show_user_guide() -> None:
             - **Sector Cap**: Scales sector constituents when threshold exceeded
             - **Alerts**: Drawdown, concentration, VaR95
             - **Slippage Tracking**: Execution report shows slippage_cost per order
+            - **Turnover Enforcement**: BUY orders can be blocked if predicted window % exceeds configured cap
             """
         )
 
@@ -87,6 +89,7 @@ def show_user_guide() -> None:
             - **Slippage**: Basis point adjustment applied to execution price
             - **Extensibility**: Implement `target_weights(ctx)` and register new strategies
             - **Testing**: Run `pytest` (coverage gate enforced)
+            - **Graceful Degradation**: Turnover module optional; if absent, execution ignores enforcement silently
             """
         )
 
@@ -112,6 +115,66 @@ def show_user_guide() -> None:
             - Performance profiling utility (timing: returns estimation, covariance, strategy evaluation, overlays)
             - Factor exposure estimation via rolling OLS (no intercept) with stability safeguards
 
-            **Roadmap:** Liquidity-adjusted sizing, volatility targeting, turnover constraints, adaptive regime models.
+            **Phase 14 Additions:** Adaptive regime probabilistic layer, turnover budget ledger & enforcement.
+
+            **Roadmap:** Liquidity-adjusted sizing, realized volatility targeting loop, advanced turnover attribution, adaptive regime model calibration.
             """
         )
+
+    st.subheader("🧭 Adaptive Regime Layer (Phase 14)")
+    st.markdown(
+        """
+        The adaptive regime module converts rolling market features into **probabilities** across four regimes:
+        `bull`, `bear`, `high_vol`, `sideways`. These probabilities are then mapped to blended **risk targets** used by overlays:
+
+        - **Feature Extraction**: Rolling volatility (short/med/long), volatility ratios, medium-horizon return, drawdown depth, downside hit rate, simple trend flag.
+        - **Scoring → Probabilities**: Transparent heuristic scores (trend, Sharpe proxy, downside pressure, drawdown stress, vol expansion) combined via softmax.
+        - **Risk Translation**: Probabilities blend regime-specific target annualized volatility (e.g. Bull 18%, Bear 10%, High Vol 12%, Sideways 14%) and gross exposure scalers (Bull 1.00, Bear 0.60, High Vol 0.70, Sideways 0.85) into dynamic targets.
+        - **Usage**: Downstream optimization / overlays can (next steps) scale composite weights to the blended gross target and optionally volatility-target the portfolio.
+        - **Interpretation**: A mixed environment (e.g. 40% high_vol, 35% bear) produces intermediate risk targets instead of regime “flips”.
+
+        Current defaults favor *rapid de‑risking* under combined deep drawdown + elevated short-term volatility + high downside hit rate (crisis composite).
+
+        Upcoming steps will wire: (1) probability display & diagnostics, (2) dynamic gross scaler application, (3) optional realized vol targeting loop.
+        """
+    )
+
+    # --- New Section: Turnover Budget & Enforcement ---
+    st.subheader("♻️ Turnover Budget & Enforcement")
+    st.markdown(
+        """
+        The **Turnover Budget** limits cumulative trade notional over a rolling window (default 30 days) to a
+        configurable fraction of average portfolio equity (default 80%). This encourages *measured capital
+        rotation* and reduces churn.
+
+        **Mechanics**
+        - Each committed BUY or SELL appends a ledger row with notional and an equity snapshot.
+        - A pre‑trade check on BUY orders predicts post‑trade window %; if it would exceed the cap the order is tagged `blocked_turnover` and skipped.
+        - SELLs are currently logged for transparency but do not trigger blocking (configurable later).
+        - Average equity is approximated from recorded snapshots; future enhancement may weight recent observations.
+
+        **Configuration**
+        - Table: `turnover_budget` (single row) with `window_days`, `max_pct`.
+        - Ledger: `turnover_ledger` capturing `timestamp`, `ticker`, `side`, `notional`, `equity_snapshot`, `blocked`.
+        - Initialize / update using `init_turnover_budget(...)` in `services.turnover_budget` or via future UI panel.
+
+        **Execution Report Tags**
+        - `filled` / `partial_filled`: Executed normally.
+        - `blocked_turnover`: Skipped due to projected budget breach.
+        - `rejected`: Failed validation (cash / shares).
+        - `skipped`: Non-actionable (e.g. price/share invalid or scaled_to_zero).
+
+        **Design Choices**
+        - BUY‑side pre‑block keeps realized turnover deterministic and avoids post‑hoc rollbacks.
+        - Graceful fallback: if turnover module import fails, execution proceeds without enforcement.
+        - Simplicity first: single rolling window; future roadmap could add per‑strategy buckets or decay weighting.
+
+        **Monitoring (Planned UI)**
+        - Remaining %, used %, total notional, recent ledger entries.
+        - Visual gauge for current vs. cap.
+
+        **Testing**
+        - Unit tests validate initialization, predictive blocking, and ledger clearing.
+        - Integration tests (planned) will assert `blocked_turnover` status within `execute_orders`.
+        """
+    )

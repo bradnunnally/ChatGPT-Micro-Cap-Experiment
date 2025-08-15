@@ -28,36 +28,33 @@ def clear_database() -> None:
     try:
         # Ensure directory and connect
         Path(settings.paths.data_dir).mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
 
-        # Clear all tables
-        tables = ["portfolio", "cash", "trade_log", "portfolio_history"]
+            # Clear all tables
+            tables = ["portfolio", "cash", "trade_log", "portfolio_history"]
+            for table in tables:
+                try:
+                    cursor.execute(f"DELETE FROM {table}")
+                    rows_deleted = cursor.rowcount
+                    logger.info(
+                        "Cleared table",
+                        extra={"event": "db_clear", "table": table, "rows_deleted": rows_deleted},
+                    )
+                except sqlite3.Error as e:
+                    logger.error(
+                        "Error clearing table",
+                        extra={"event": "db_clear", "table": table, "error": str(e)},
+                    )
 
-        for table in tables:
+            # Insert default cash balance of $10,000
             try:
-                cursor.execute(f"DELETE FROM {table}")
-                rows_deleted = cursor.rowcount
-                logger.info(
-                    "Cleared table",
-                    extra={"event": "db_clear", "table": table, "rows_deleted": rows_deleted},
-                )
+                cursor.execute("INSERT INTO cash (balance) VALUES (?)", (10000.0,))
+                logger.info("Set initial cash balance", extra={"event": "db_clear", "cash": 10000.0})
             except sqlite3.Error as e:
-                logger.error(
-                    "Error clearing table",
-                    extra={"event": "db_clear", "table": table, "error": str(e)},
-                )
+                logger.error("Error setting cash balance", extra={"event": "db_clear", "error": str(e)})
 
-        # Insert default cash balance of $10,000
-        try:
-            cursor.execute("INSERT INTO cash (balance) VALUES (?)", (10000.0,))
-            logger.info("Set initial cash balance", extra={"event": "db_clear", "cash": 10000.0})
-        except sqlite3.Error as e:
-            logger.error("Error setting cash balance", extra={"event": "db_clear", "error": str(e)})
-
-        # Commit changes
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         logger.info(
             "Database cleared successfully", extra={"event": "db_clear", "status": "success"}

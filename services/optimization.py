@@ -313,6 +313,7 @@ __all__ = [
     "register_strategy",
     "register_phase9_strategies",
     "apply_volatility_cap",
+    "apply_volatility_target",
     "compute_factor_exposures",
     "regime_risk_overlay",
     "profile_optimization_pipeline",
@@ -380,6 +381,54 @@ def apply_volatility_cap(
     return scaled_active
 
 
+def apply_volatility_target(
+    weights: dict[str, float],
+    returns_history: pd.DataFrame | None,
+    target_annual_vol: float | None,
+    window: int = 60,
+    floor_scale: float = 0.2,
+) -> dict[str, float]:
+    """Scale weights (up or down) toward a target annualized volatility.
+
+    Unlike the cap (which only scales down), this attempts to adjust exposure up if
+    realized vol is far below target (subject to a max scale that preserves sign and
+    avoids extreme leverage). If current gross < 1 we allow proportional increase
+    but never exceed scale factor implied by target / current or inverse of floor_scale.
+    Returns new weights dict (may sum != 1 representing implicit cash or leverage placeholder).
+    """
+    if not weights or target_annual_vol is None or target_annual_vol <= 0:
+        return weights
+    if returns_history is None or returns_history.empty:
+        return weights
+    use = returns_history.tail(window)
+    cols = [c for c in use.columns if c in weights]
+    if len(cols) < 2:
+        return weights
+    sub = use[cols].dropna(how="all")
+    if sub.empty:
+        return weights
+    cov = sub.cov().fillna(0.0)
+    w = pd.Series({k: float(v) for k, v in weights.items() if k in cov.columns})
+    if w.empty:
+        return weights
+    active_sum = w.sum()
+    if active_sum <= 0:
+        return weights
+    w_norm = w / active_sum
+    var_daily = float(w_norm.values @ cov.loc[w_norm.index, w_norm.index].values @ w_norm.values)
+    if var_daily <= 0:
+        return weights
+    import math
+    vol_ann = math.sqrt(var_daily) * math.sqrt(252)
+    target = target_annual_vol
+    if abs(vol_ann - target) / target < 0.05:  # within 5% band; no change
+        return weights
+    scale = target / vol_ann
+    # Bound scale to avoid extreme leverage or collapse
+    scale = float(np.clip(scale, floor_scale, 1.5))
+    return {k: v * scale for k, v in weights.items()}
+
+
 # ---------- Factor Exposure Estimation (Rolling Betas) ----------
 
 def compute_factor_exposures(
@@ -444,9 +493,22 @@ def compute_factor_exposures(
     return exposures
 
 
-def regime_risk_overlay(weights: dict[str, float], regime_label: str | None) -> dict[str, float]:
+def regime_risk_overlay(weights: dict[str, float], regime_label: str | None, regime_probs: dict[str, float] | None = None, gross_target: float | None = None) -> dict[str, float]:
+    """Scale weights based on regime.
+
+    If regime_probs & gross_target provided (Phase 14 adaptive layer), use gross_target directly.
+    Else fall back to static map by regime_label.
+    """
     if not weights:
         return weights
+    if gross_target is not None and gross_target > 0:
+        current_gross = sum(abs(v) for v in weights.values())
+        if current_gross <= 0:
+            return weights
+        scale = gross_target / current_gross
+        if abs(scale - 1.0) < 1e-6:
+            return weights
+        return {k: v * scale for k, v in weights.items()}
     scale_map = {"high_vol": 0.7, "bear": 0.6, "sideways": 0.9, "bull": 1.0}
     s = scale_map.get(regime_label or "", 1.0)
     if abs(s - 1.0) < 1e-6:

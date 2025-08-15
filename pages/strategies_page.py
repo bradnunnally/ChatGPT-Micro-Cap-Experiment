@@ -23,11 +23,18 @@ from services.optimization import (
     factor_neutral_overlay,
     apply_turnover_penalty,
     apply_volatility_cap,
+    apply_volatility_target,
     compute_factor_exposures,
     regime_risk_overlay,  # added
 )
 from services.factors import get_factor_returns, DEFAULT_FACTORS
 from services.regime import detect_regime
+from services.regime_features import compute_regime_features, RegimeFeaturesConfig
+from services.regime_scoring import (
+    compute_regime_probabilities,
+    translate_regime_risk,
+    RegimeScoringConfig,
+)
 from services.market import fetch_prices
 from services.rebalance import execute_orders
 
@@ -121,7 +128,74 @@ else:
             cap_inputs[strat.name] = st.number_input(f"{strat.name}", min_value=0.0, value=default_cap, step=0.1, key=f"cap_{strat.name}")
     regime_info = detect_regime()
     regime_label = regime_info.get("label","unknown")
-    st.caption(f"Detected regime: {regime_label} (vol {regime_info.get('vol_pct','?'):.2f}% avg_ret {regime_info.get('avg_ret_pct','?'):.3f}%)")
+    st.caption(f"Detected regime (heuristic): {regime_label} (vol {regime_info.get('vol_pct','?'):.2f}% avg_ret {regime_info.get('avg_ret_pct','?'):.3f}%)")
+    # Adaptive regime probabilities (Phase 14) using returns history if present
+    regime_probs = None
+    risk_translation = None
+    returns_hist = None
+    if ctx.extra and ctx.extra.get('returns_history') is not None:
+        returns_hist = ctx.extra.get('returns_history')
+    custom_regime_cfg: RegimeScoringConfig | None = None
+    if returns_hist is not None and not returns_hist.empty and returns_hist.shape[0] > 30:
+        try:
+            # Use aggregate portfolio proxy: equal-weight index of universe if available
+            eq_series = returns_hist.mean(axis=1).dropna()
+            feats = compute_regime_features(eq_series, RegimeFeaturesConfig())
+            regime_probs, primary = compute_regime_probabilities(feats)
+            # Adaptive regime settings UI (persisted via session_state)
+            with st.expander("Adaptive Regime Settings", expanded=False):
+                if 'regime_cfg' not in st.session_state:
+                    st.session_state['regime_cfg'] = {
+                        'bull_vol': 18.0,
+                        'bear_vol': 10.0,
+                        'high_vol_vol': 12.0,
+                        'sideways_vol': 14.0,
+                        'bull_gross': 1.00,
+                        'bear_gross': 0.60,
+                        'high_vol_gross': 0.70,
+                        'sideways_gross': 0.85,
+                    }
+                cfg_state = st.session_state['regime_cfg']
+                colv1, colv2, colv3, colv4 = st.columns(4)
+                cfg_state['bull_vol'] = colv1.number_input("Bull Target Vol %", min_value=1.0, max_value=100.0, value=float(cfg_state['bull_vol']), step=0.5)
+                cfg_state['bear_vol'] = colv2.number_input("Bear Target Vol %", min_value=1.0, max_value=100.0, value=float(cfg_state['bear_vol']), step=0.5)
+                cfg_state['high_vol_vol'] = colv3.number_input("High Vol Target Vol %", min_value=1.0, max_value=100.0, value=float(cfg_state['high_vol_vol']), step=0.5)
+                cfg_state['sideways_vol'] = colv4.number_input("Sideways Target Vol %", min_value=1.0, max_value=100.0, value=float(cfg_state['sideways_vol']), step=0.5)
+                colg1, colg2, colg3, colg4 = st.columns(4)
+                cfg_state['bull_gross'] = colg1.number_input("Bull Gross", min_value=0.1, max_value=2.0, value=float(cfg_state['bull_gross']), step=0.05)
+                cfg_state['bear_gross'] = colg2.number_input("Bear Gross", min_value=0.1, max_value=2.0, value=float(cfg_state['bear_gross']), step=0.05)
+                cfg_state['high_vol_gross'] = colg3.number_input("High Vol Gross", min_value=0.1, max_value=2.0, value=float(cfg_state['high_vol_gross']), step=0.05)
+                cfg_state['sideways_gross'] = colg4.number_input("Sideways Gross", min_value=0.1, max_value=2.0, value=float(cfg_state['sideways_gross']), step=0.05)
+                colr1, colr2 = st.columns([1,1])
+                if colr1.button("Reset Regime Settings"):
+                    st.session_state['regime_cfg'] = {
+                        'bull_vol': 18.0,
+                        'bear_vol': 10.0,
+                        'high_vol_vol': 12.0,
+                        'sideways_vol': 14.0,
+                        'bull_gross': 1.00,
+                        'bear_gross': 0.60,
+                        'high_vol_gross': 0.70,
+                        'sideways_gross': 0.85,
+                    }
+                    st.experimental_rerun()
+                # Build config object
+                custom_regime_cfg = RegimeScoringConfig(
+                    target_vol_bull=cfg_state['bull_vol']/100.0,
+                    target_vol_bear=cfg_state['bear_vol']/100.0,
+                    target_vol_high_vol=cfg_state['high_vol_vol']/100.0,
+                    target_vol_sideways=cfg_state['sideways_vol']/100.0,
+                    gross_bull=cfg_state['bull_gross'],
+                    gross_bear=cfg_state['bear_gross'],
+                    gross_high_vol=cfg_state['high_vol_gross'],
+                    gross_sideways=cfg_state['sideways_gross'],
+                )
+            risk_translation = translate_regime_risk(regime_probs, custom_regime_cfg)
+            st.caption(
+                f"Adaptive regime probs: bull {regime_probs['bull']*100:.1f}% | bear {regime_probs['bear']*100:.1f}% | high_vol {regime_probs['high_vol']*100:.1f}% | sideways {regime_probs['sideways']*100:.1f}% -> blended gross {risk_translation['gross_exposure']:.2f} target_vol {risk_translation['target_vol']*100:.1f}%"
+            )
+        except Exception:
+            pass
     # Regime heuristic button (simple illustrative rules)
     if st.button("Apply Regime Heuristic Weights"):
         # Use current capital inputs and adjust, then reassign to inputs by mutating session persisted caps
@@ -165,6 +239,10 @@ else:
                 target_vol = None
                 if vol_cap_enabled:
                     target_vol = st.number_input("Target Max Annual Vol (%)", min_value=1.0, max_value=100.0, value=15.0, step=1.0)
+                apply_vol_target = st.checkbox(
+                    "Volatility Target (Adaptive)", value=False,
+                    help="Scale weights toward blended regime target volatility (after gross scaling, before cap)."
+                )
                 apply_regime_scale = st.checkbox("Regime Risk Scaling", value=False, help="Uniformly scale risk based on detected market regime (reduces gross exposure in high_vol/bear).")
             # Build composite weights dict to apply overlays
             base_comp = alloc_long.drop_duplicates("ticker")["ticker"].to_list()
@@ -201,7 +279,25 @@ else:
                     st.caption("Factor neutralization skipped (insufficient asset or factor return history yet).")
             # Regime risk overlay scaling BEFORE volatility cap so vol cap sees scaled exposure
             if 'apply_regime_scale' in locals() and apply_regime_scale:
-                comp_map = regime_risk_overlay(comp_map, regime_label)
+                # Prefer adaptive probabilities if available; fall back to heuristic label
+                if risk_translation is not None:
+                    comp_map = regime_risk_overlay(
+                        comp_map,
+                        regime_label,
+                        regime_probs=regime_probs,
+                        gross_target=risk_translation.get('gross_exposure'),
+                    )
+                else:
+                    comp_map = regime_risk_overlay(comp_map, regime_label)
+            # Volatility targeting (adaptive) applied before cap so cap can still enforce a hard ceiling
+            if apply_regime_scale and apply_vol_target and risk_translation is not None:
+                blended_target = risk_translation.get('target_vol')
+                if blended_target and blended_target > 0:
+                    comp_map = apply_volatility_target(
+                        comp_map,
+                        returns_hist,
+                        target_annual_vol=blended_target,
+                    )
             # Volatility cap scaling (introduces implicit cash if scaling <1)
             if vol_cap_enabled and target_vol:
                 returns_hist = ctx.extra.get('returns_history') if ctx.extra else None

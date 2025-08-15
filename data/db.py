@@ -91,6 +91,26 @@ SCHEMA_STATEMENTS = [
         PRIMARY KEY (date, ticker)
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS turnover_budget (
+        id INTEGER PRIMARY KEY CHECK (id = 0),
+        window_days INTEGER NOT NULL DEFAULT 30,
+        max_pct REAL NOT NULL DEFAULT 0.80, -- max cumulative notional / avg equity over window
+        reset_timestamp TEXT
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS turnover_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        side TEXT NOT NULL,
+        notional REAL NOT NULL,
+        equity_snapshot REAL NOT NULL,
+        cumulative_window_pct REAL,
+        blocked INTEGER NOT NULL DEFAULT 0
+    );
+    """,
 ]
 
 # Backward-compat schema string for tests that import SCHEMA

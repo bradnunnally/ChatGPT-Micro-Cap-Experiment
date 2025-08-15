@@ -176,9 +176,8 @@ def build_default_scheduler() -> Scheduler:
         # Run a tiny SMA grid on TOTAL equity and store summary CSV (rotating)
         try:
             db_path = settings.paths.db_file
-            conn = sqlite3.connect(db_path)
-            df = pd.read_sql_query("SELECT date, total_equity as price FROM portfolio_history WHERE ticker='TOTAL' ORDER BY date", conn, parse_dates=["date"])  # noqa: E501
-            conn.close()
+            with sqlite3.connect(db_path) as conn:
+                df = pd.read_sql_query("SELECT date, total_equity as price FROM portfolio_history WHERE ticker='TOTAL' ORDER BY date", conn, parse_dates=["date"])  # noqa: E501
             if df.empty or len(df) < 50:
                 return
             series = df.set_index("date")["price"].astype(float)
@@ -201,9 +200,8 @@ def build_default_scheduler() -> Scheduler:
         # Evaluate alerts using full history frame
         try:
             from services.alerts import evaluate_alerts
-            conn = sqlite3.connect(settings.paths.db_file)
-            df = pd.read_sql_query("SELECT date, ticker, total_equity, total_value FROM portfolio_history ORDER BY date", conn, parse_dates=["date"])  # noqa: E501
-            conn.close()
+            with sqlite3.connect(settings.paths.db_file) as conn:
+                df = pd.read_sql_query("SELECT date, ticker, total_equity, total_value FROM portfolio_history ORDER BY date", conn, parse_dates=["date"])  # noqa: E501
             evaluate_alerts(df)
         except Exception:  # pragma: no cover
             pass

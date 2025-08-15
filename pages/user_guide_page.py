@@ -31,15 +31,14 @@ with st.expander("Admin / Maintenance (advanced)", expanded=False):
         init_db()
         db_path = settings.paths.db_file
         try:
-            conn = sqlite3.connect(str(db_path))
-            cur = conn.cursor()
-            for table in ("portfolio", "cash", "trade_log", "portfolio_history"):
-                try:
-                    cur.execute(f"DELETE FROM {table}")
-                except Exception as e:  # pragma: no cover
-                    st.warning(f"Failed clearing {table}: {e}")
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(str(db_path)) as conn:
+                cur = conn.cursor()
+                for table in ("portfolio", "cash", "trade_log", "portfolio_history"):
+                    try:
+                        cur.execute(f"DELETE FROM {table}")
+                    except Exception as e:  # pragma: no cover
+                        st.warning(f"Failed clearing {table}: {e}")
+                conn.commit()
             st.success("Database reset complete. Reload the app or navigate to Dashboard.")
         except Exception as e:  # pragma: no cover
             st.error(f"Reset failed: {e}")

@@ -17,16 +17,14 @@ st.subheader("Backtest Sandbox (Run, Save & Compare)")
 
 @st.cache_data
 def load_price_series(db_path: str, ticker: str) -> pd.Series:
-    conn = sqlite3.connect(db_path)
     if ticker == "TOTAL":
         q = "SELECT date, total_equity as price FROM portfolio_history WHERE ticker='TOTAL' ORDER BY date"
+        with sqlite3.connect(db_path) as conn:
+            df = pd.read_sql_query(q, conn, parse_dates=["date"])  # no param
     else:
         q = "SELECT date, current_price as price FROM portfolio_history WHERE ticker=? ORDER BY date"
-    if ticker == "TOTAL":
-        df = pd.read_sql_query(q, conn, parse_dates=["date"])  # no param
-    else:
-        df = pd.read_sql_query(q, conn, params=(ticker,), parse_dates=["date"])
-    conn.close()
+        with sqlite3.connect(db_path) as conn:
+            df = pd.read_sql_query(q, conn, params=(ticker,), parse_dates=["date"])
     if df.empty:
         return pd.Series(dtype=float)
     return df.set_index("date")["price"].astype(float)

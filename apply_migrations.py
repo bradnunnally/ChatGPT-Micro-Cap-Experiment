@@ -39,24 +39,19 @@ def apply_migration(conn: sqlite3.Connection, path: Path) -> None:
 
 def main() -> None:
     db_path = settings.paths.db_file
-    conn = sqlite3.connect(str(db_path))
-    # Enable WAL/synchronous for safety
-    try:
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.execute("PRAGMA busy_timeout=3000;")
-    except Exception:
-        pass
-
-    try:
+    with sqlite3.connect(str(db_path)) as conn:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA busy_timeout=3000;")
+        except Exception:
+            pass
         applied = get_applied_versions(conn)
         for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
             version = path.stem.split("_")[0]
             if version not in applied:
                 apply_migration(conn, path)
         conn.commit()
-    finally:
-        conn.close()
 
 
 if __name__ == "__main__":

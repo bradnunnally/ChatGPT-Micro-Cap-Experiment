@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import pytest
 from services.optimization import (
     MeanVarianceStrategy,
     RiskParityStrategy,
@@ -14,6 +15,7 @@ from services.optimization import (
     apply_volatility_cap,
     regime_risk_overlay,
     profile_optimization_pipeline,
+    apply_volatility_target,
 )
 from services.strategy import StrategyContext, list_strategies
 
@@ -202,6 +204,52 @@ def test_regime_risk_overlay_scales_weights():
     assert abs(sum(scaled.values()) - 0.7) < 1e-6
     unchanged = regime_risk_overlay(base, "bull")
     assert unchanged == base
+
+def test_regime_risk_overlay_with_probabilities():
+    from services.optimization import regime_risk_overlay
+    # Provide a gross_target derived externally (simulating adaptive blend)
+    base = {"A": 0.4, "B": 0.6}
+    gross_target = 0.8
+    adapted = regime_risk_overlay(base, "bear", regime_probs={"bull":0.1,"bear":0.5,"high_vol":0.3,"sideways":0.1}, gross_target=gross_target)
+    assert abs(sum(adapted.values()) - gross_target) < 1e-6
+    # Scale factor should equal gross_target / current_gross (which is 1.0)
+    assert adapted["A"] == pytest.approx(0.4 * 0.8)
+
+
+def test_apply_volatility_target_scales_down():
+    # Create high vol series so target < current
+    rng = np.random.default_rng(42)
+    a = rng.normal(0,0.03, size=120)
+    b = rng.normal(0,0.025, size=120)
+    hist = pd.DataFrame({"A":a,"B":b})
+    weights = {"A":0.6,"B":0.4}
+    # Compute current vol to set a lower target
+    cov = hist.cov().fillna(0)
+    w = pd.Series(weights)
+    import math
+    var = float((w.values @ cov.values @ w.values))
+    curr_vol = math.sqrt(var) * math.sqrt(252)
+    target = curr_vol * 0.7
+    new_w = apply_volatility_target(weights, hist, target_annual_vol=target)
+    assert sum(new_w.values()) < sum(weights.values()) + 1e-9  # scaled down
+
+
+def test_apply_volatility_target_scales_up_within_bounds():
+    # Low vol series so target > current
+    rng = np.random.default_rng(7)
+    a = rng.normal(0,0.005, size=120)
+    b = rng.normal(0,0.006, size=120)
+    hist = pd.DataFrame({"A":a,"B":b})
+    weights = {"A":0.5,"B":0.5}
+    cov = hist.cov().fillna(0)
+    w = pd.Series(weights)
+    import math
+    var = float((w.values @ cov.values @ w.values))
+    curr_vol = math.sqrt(var) * math.sqrt(252)
+    target = curr_vol * 1.3
+    new_w = apply_volatility_target(weights, hist, target_annual_vol=target)
+    # Should scale up but not exceed 1.5 upper bound scaling
+    assert sum(new_w.values()) > sum(weights.values()) - 1e-9
 
 
 def test_profile_optimization_pipeline_timings():

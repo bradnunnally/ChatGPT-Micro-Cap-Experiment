@@ -24,22 +24,17 @@ def reset(empty_cash: bool = True) -> None:
 
     # Ensure schema exists
     init_db()
-    conn = sqlite3.connect(str(db_path))
-    try:
+    with sqlite3.connect(str(db_path)) as conn:
         cur = conn.cursor()
-        # Wipe relevant tables
         for table in ("portfolio", "cash", "trade_log", "portfolio_history"):
             try:
                 cur.execute(f"DELETE FROM {table}")
             except Exception as e:  # pragma: no cover
                 logger.error("table_clear_failed", extra={"table": table, "error": str(e)})
         if not empty_cash:
-            # Optionally seed a starting cash (rare use; default is zero cash)
             cur.execute("INSERT OR REPLACE INTO cash (id, balance) VALUES (0, ?)", (0.0,))
         conn.commit()
         logger.info("fresh_reset_complete", extra={"cash_seeded": not empty_cash})
-    finally:
-        conn.close()
 
 if __name__ == '__main__':
     with new_correlation_id():

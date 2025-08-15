@@ -36,14 +36,13 @@ st.subheader("Performance Dashboard")
 @st.cache_data
 def load_portfolio_history(db_path: str) -> pd.DataFrame:
     """Load portfolio history from the database including individual tickers."""
-    conn = sqlite3.connect(db_path)
     query = """
         SELECT date, ticker, total_equity, total_value 
         FROM portfolio_history 
         ORDER BY date;
     """
-    df = pd.read_sql_query(query, conn, parse_dates=["date"])
-    conn.close()
+    with sqlite3.connect(db_path) as conn:
+        df = pd.read_sql_query(query, conn, parse_dates=["date"])
 
     # Replace empty strings safely and convert to float without deprecated downcasting
     te = df["total_equity"]

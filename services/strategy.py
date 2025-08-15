@@ -459,7 +459,7 @@ CREATE TABLE IF NOT EXISTS strategy_registry (
 """
 
 
-def _connect():  # pragma: no cover - trivial wrapper
+def _connect():  # pragma: no cover - kept for backwards compatibility
     return sqlite3.connect(settings.paths.db_file)
 
 
@@ -470,25 +470,23 @@ def save_strategy_registry(capital_overrides: Optional[Dict[str, float]] = None)
         capital_overrides: mapping name->capital_weight to store (normalized externally).
     """
     try:
-        conn = _connect()
-        conn.execute(_STRATEGY_TABLE_SQL)
-        for name, meta in _REGISTRY.items():
-            obj = meta["obj"]
-            active = 1 if meta.get("active") else 0
-            cap = float(capital_overrides.get(name, 1.0) if capital_overrides else 1.0)
-            # Identify type and params
-            if isinstance(obj, EqualWeightStrategy):
-                t = "equal_weight"; params = {}
-            elif isinstance(obj, TopNPriceMomentumStrategy):
-                t = "momentum"; params = {"top_n": obj.top_n}
-            else:
-                # generic fallback: skip unknown type
-                continue
-            conn.execute(
-                "REPLACE INTO strategy_registry(name,type,params,active,capital_weight) VALUES (?,?,?,?,?)",
-                (name, t, json.dumps(params), active, cap),
-            )
-        conn.commit(); conn.close()
+        with _connect() as conn:
+            conn.execute(_STRATEGY_TABLE_SQL)
+            for name, meta in _REGISTRY.items():
+                obj = meta["obj"]
+                active = 1 if meta.get("active") else 0
+                cap = float(capital_overrides.get(name, 1.0) if capital_overrides else 1.0)
+                if isinstance(obj, EqualWeightStrategy):
+                    t = "equal_weight"; params = {}
+                elif isinstance(obj, TopNPriceMomentumStrategy):
+                    t = "momentum"; params = {"top_n": obj.top_n}
+                else:
+                    continue
+                conn.execute(
+                    "REPLACE INTO strategy_registry(name,type,params,active,capital_weight) VALUES (?,?,?,?,?)",
+                    (name, t, json.dumps(params), active, cap),
+                )
+            conn.commit()
     except Exception as e:  # pragma: no cover - defensive
         logger.error("strategy_persist_failed", extra={"error": str(e)})
 
@@ -500,11 +498,10 @@ def load_strategy_registry() -> Dict[str, float]:
     """
     caps: Dict[str, float] = {}
     try:
-        conn = _connect()
-        conn.execute(_STRATEGY_TABLE_SQL)
-        cur = conn.execute("SELECT name,type,params,active,capital_weight FROM strategy_registry")
-        rows = cur.fetchall()
-        conn.close()
+        with _connect() as conn:
+            conn.execute(_STRATEGY_TABLE_SQL)
+            cur = conn.execute("SELECT name,type,params,active,capital_weight FROM strategy_registry")
+            rows = cur.fetchall()
     except Exception as e:  # pragma: no cover
         logger.error("strategy_load_failed", extra={"error": str(e)})
         return caps

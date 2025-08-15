@@ -644,13 +644,12 @@ def _archive_quote(ticker: str, price: float) -> None:
     try:
         from app_settings import settings as _settings  # local import to avoid cycles
         ts = pd.Timestamp.utcnow().isoformat()
-        conn = sqlite3.connect(_settings.paths.db_file)
-        conn.execute(
-            "INSERT INTO quote_archive (timestamp, ticker, price) VALUES (?,?,?)",
-            (ts, ticker.upper(), float(price)),
-        )
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(_settings.paths.db_file) as conn:  # context manager ensures closure
+            conn.execute(
+                "INSERT INTO quote_archive (timestamp, ticker, price) VALUES (?,?,?)",
+                (ts, ticker.upper(), float(price)),
+            )
+            conn.commit()
     except Exception:  # pragma: no cover - non critical
         pass
 
@@ -661,40 +660,35 @@ def rollup_daily_prices(for_date: str | None = None) -> int:
     """
     try:
         from app_settings import settings as _settings
-        conn = sqlite3.connect(_settings.paths.db_file)
         if for_date is None:
-            # Use date in UTC to avoid timezone complexity; business logic can adapt later
             for_date = pd.Timestamp.utcnow().strftime("%Y-%m-%d")
-        # Select all quotes for that date (UTC date substring)
-        df = pd.read_sql_query(
-            "SELECT * FROM quote_archive WHERE substr(timestamp,1,10)=?",
-            conn,
-            params=(for_date,),
-            parse_dates=["timestamp"],
-        )
-        if df.empty:
-            conn.close()
-            return 0
-        df["ticker"] = df["ticker"].str.upper()
-        rows = []
-        for t, grp in df.groupby("ticker"):
-            prices = grp.sort_values("timestamp")["price"].astype(float)
-            o = float(prices.iloc[0])
-            h = float(prices.max())
-            l = float(prices.min())
-            c = float(prices.iloc[-1])
-            rows.append((for_date, t, o, h, l, c, None))
-        # Upsert rows
-        upsert_sql = (
-            "INSERT INTO daily_prices (date, ticker, open, high, low, close, volume) "
-            "VALUES (?,?,?,?,?,?,?) "
-            "ON CONFLICT(date, ticker) DO UPDATE SET open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close"
-        )
-        cur = conn.executemany(upsert_sql, rows)
-        conn.commit()
-        count = cur.rowcount if cur.rowcount is not None else len(rows)
-        conn.close()
-        return count
+        with sqlite3.connect(_settings.paths.db_file) as conn:
+            df = pd.read_sql_query(
+                "SELECT * FROM quote_archive WHERE substr(timestamp,1,10)=?",
+                conn,
+                params=(for_date,),
+                parse_dates=["timestamp"],
+            )
+            if df.empty:
+                return 0
+            df["ticker"] = df["ticker"].str.upper()
+            rows = []
+            for t, grp in df.groupby("ticker"):
+                prices = grp.sort_values("timestamp")["price"].astype(float)
+                o = float(prices.iloc[0])
+                h = float(prices.max())
+                l = float(prices.min())
+                c = float(prices.iloc[-1])
+                rows.append((for_date, t, o, h, l, c, None))
+            upsert_sql = (
+                "INSERT INTO daily_prices (date, ticker, open, high, low, close, volume) "
+                "VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(date, ticker) DO UPDATE SET open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close"
+            )
+            cur = conn.executemany(upsert_sql, rows)
+            conn.commit()
+            count = cur.rowcount if cur.rowcount is not None else len(rows)
+            return count
     except Exception:  # pragma: no cover
         return 0
 
@@ -706,21 +700,19 @@ def get_daily_price_series(ticker: str, limit: int | None = None) -> pd.DataFram
     """
     try:
         from app_settings import settings as _settings
-        conn = sqlite3.connect(_settings.paths.db_file)
         sql = "SELECT date, open, high, low, close, volume FROM daily_prices WHERE ticker=? ORDER BY date"
         params = (ticker.upper(),)
-        df = pd.read_sql_query(sql, conn, params=params, parse_dates=["date"])
-        conn.close()
+        with sqlite3.connect(_settings.paths.db_file) as conn:
+            df = pd.read_sql_query(sql, conn, params=params, parse_dates=["date"])
         if df.empty:
             # fallback: last quote
-            conn = sqlite3.connect(_settings.paths.db_file)
-            qdf = pd.read_sql_query(
-                "SELECT * FROM quote_archive WHERE ticker=? ORDER BY timestamp DESC LIMIT 1",
-                conn,
-                params=(ticker.upper(),),
-                parse_dates=["timestamp"],
-            )
-            conn.close()
+            with sqlite3.connect(_settings.paths.db_file) as conn:
+                qdf = pd.read_sql_query(
+                    "SELECT * FROM quote_archive WHERE ticker=? ORDER BY timestamp DESC LIMIT 1",
+                    conn,
+                    params=(ticker.upper(),),
+                    parse_dates=["timestamp"],
+                )
             if not qdf.empty:
                 last_price = float(qdf.iloc[0]["price"])
                 day = qdf.iloc[0]["timestamp"].strftime("%Y-%m-%d")
