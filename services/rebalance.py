@@ -32,6 +32,15 @@ except Exception:  # pragma: no cover
     def evaluate_turnover(*_a, **_k):  # type: ignore
         return {"will_block": False}
 
+# Governance rule evaluation (optional)
+try:  # pragma: no cover - optional import
+    from services.governance import evaluate_pre_trade_rules, record_breaches  # type: ignore
+except Exception:  # pragma: no cover
+    def evaluate_pre_trade_rules(*_a, **_k):  # type: ignore
+        return {"will_block": False, "breaches": []}
+    def record_breaches(*_a, **_k):  # type: ignore
+        return None
+
 def _coerce_portfolio(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure the portfolio frame has required columns with default values."""
     base_cols_defaults = {
@@ -65,6 +74,7 @@ def execute_orders(
     enable_partial: bool = True,
     log_trades: bool = True,
     enforce_turnover_budget: bool = True,
+    enforce_governance: bool = False,
 ) -> Tuple[pd.DataFrame, float, pd.DataFrame]:
     """Execute a batch of orders against a portfolio.
 
@@ -142,6 +152,23 @@ def execute_orders(
                     eval_res = evaluate_turnover(cost, equity_snap)
                     if eval_res.get("will_block"):
                         rep_rows.append({"ticker": t, "side": side, "shares": shares, "status": "blocked_turnover", "reason": "turnover_budget_exceeded"})
+                        continue
+                except Exception:  # pragma: no cover
+                    pass
+
+            # Governance pre-block
+            if commit and enforce_governance:
+                try:
+                    gov_eval = evaluate_pre_trade_rules(pf, cash, o, exec_price, shares)
+                    if gov_eval.get("will_block"):
+                        record_breaches(gov_eval.get("breaches", []))
+                        rep_rows.append({
+                            "ticker": t,
+                            "side": side,
+                            "shares": shares,
+                            "status": "blocked_governance",
+                            "reason": ",".join({b.get("reason","") for b in gov_eval.get("breaches", [])}),
+                        })
                         continue
                 except Exception:  # pragma: no cover
                     pass

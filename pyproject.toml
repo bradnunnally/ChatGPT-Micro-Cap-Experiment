@@ -38,3 +38,13 @@ exclude = [
 line-length = 100
 target-version = ['py313']
 skip-string-normalization = false
+
+[project]
+name = "ai-assisted-trading-portfolio"
+version = "0.5.0"
+description = "AI Assisted Trading Portfolio Manager (Governance + Risk Monitor release)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Proprietary"}
+authors = [{name = "Maintainer", email = "maintainer@example.com"}]
+dependencies = []

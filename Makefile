@@ -111,3 +111,13 @@ freeze:
 	chmod +x dist/release-$(VERSION)/launch.sh
 	@echo "Frozen release ready: dist/release-$(VERSION)"
 	@echo "Run: ./dist/release-$(VERSION)/launch.sh"
+
+release-smoke: migrate
+	@echo "Running release smoke (tests + audit chain verify stub)"
+	. .venv/bin/activate && pytest -q
+	python - <<'PY'
+from services.governance import verify_audit_chain
+ok = verify_audit_chain()
+print("Audit chain integrity:", "OK" if ok else "BROKEN")
+PY
+	@echo "Smoke complete."

@@ -30,6 +30,40 @@ Check out the latest results in [`docs/experiment_details`](docs/experiment_deta
 
 This repository now includes a **full-featured Streamlit web application** for portfolio management and analysis.
 
+## 📦 Release Notes v0.5.0 (Governance + Risk Monitor)
+
+This tagged release consolidates prior functionality (Phases 7, 9, selected 14) and introduces core Governance & partial Advanced Risk Monitoring (Phases 10 & partial 11):
+
+### Highlights
+- Governance schema & hash chains: `audit_event`, `config_snapshot`, `breach_log`, `risk_event` (all append-only with SHA‑256 prev_hash linking).
+- Pre‑trade rule engine (blocking) with rule types: `position_weight`, `max_trade_notional_pct`, `sector_aggregate_weight`.
+- Governance Console UI: rule CRUD, snapshots, audit chain verify, breaches panel, risk events panel.
+- Risk Monitor: snapshot metrics (equity, cash, top1/top3 concentration, rolling 20d vol, max drawdown, VaR95) + heuristic risk_event emission.
+- Exposure Scalar: regime probabilities + open breaches → gross exposure multiplier heuristic.
+- Turnover Budget module (rolling window predictive BUY blocking) integrated (from Phase 14 subset).
+- Sustained test coverage ≥80% (current ~82.5%).
+
+### Backward Compatibility
+- Only additive schema changes (migrations 0002, 0003). Existing pre‑governance DBs require running `make migrate`.
+- Execution governance blocking remains opt‑in (`enforce_governance=True` when calling execution path).
+
+### Manual Smoke Checklist
+1. `cp .env.example .env` (set APP_ENV=dev_stage) → `make install && make migrate`.
+2. Launch: `make run` (or `streamlit run app.py`).
+3. Add cash & a few positions; verify Dashboard metrics update.
+4. Governance page → create a config snapshot; verify audit chain success.
+5. Add a low threshold position weight rule and attempt exceeding BUY → order blocked + breach logged.
+6. Trigger a risk event (e.g., concentrate portfolio) → risk events table shows new entry (hash & prev_hash populated).
+7. Run `make release-smoke` → tests + audit chain integrity message.
+8. (Optional) Tamper test: manually edit a hash in `audit_event`; `verify_audit_chain()` (UI button) should fail.
+
+### Deferred (Not in 0.5.0)
+- Scheduled hash integrity audits & alerts.
+- Breach notes editing UI & JSON params editor (sector map management).
+- Strategy parameter versioning & advanced execution microstructure refinements.
+
+For a detailed change log see `CHANGELOG.md`.
+
 ### Key Features (Phases 1–9):
  - **📱 Real-time Portfolio Dashboard** – Live tracking (Finnhub production; deterministic synthetic dev mode)
  - **📈 Performance Analytics** – Historical charts, KPIs, extended risk (MDD, rolling vol, Sharpe*, Sortino*, placeholder beta, concentration, VaR/ES 95 & 99, rolling multi-window betas, correlation matrix, VaR95 hit ratio, position VaR contributions)

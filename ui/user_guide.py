@@ -59,6 +59,8 @@ def show_user_guide() -> None:
             - **Alerts**: Drawdown, concentration, VaR95
             - **Slippage Tracking**: Execution report shows slippage_cost per order
             - **Turnover Enforcement**: BUY orders can be blocked if predicted window % exceeds configured cap
+                - **Risk Monitor (Phase 11)**: Periodic snapshot (equity, cash, top1/top3 concentration, rolling 20d vol, max drawdown, VaR95) with heuristic event emission to hash‑chained `risk_event` table
+                - **Exposure Scalar (Phase 11)**: Heuristic gross exposure multiplier blending regime probabilities (bear, high_vol) and open governance breaches
             """
         )
 
@@ -94,7 +96,49 @@ def show_user_guide() -> None:
             """
         )
 
-    st.subheader("📊 Data Coverage & Provider Capabilities")
+    st.subheader("�️ Governance & Compliance (Phase 10)")
+    st.markdown(
+        """
+        Core governance primitives add **policy rules**, **audit hash chain**, **config snapshots**, and **breach logging**.
+
+        **Tables & Integrity**
+        - `policy_rule`: Active rules (e.g., `MAX_POSITION_WEIGHT`).
+        - `audit_event`: Append-only log with SHA-256 hash chaining (`hash` over prev_hash|category|refs|payload_json). `verify_audit_chain()` checks integrity.
+        - `config_snapshot`: Versioned JSON blobs (per `kind`) with independent hash chains for reproducibility of risk / strategy settings.
+        - `breach_log`: Recorded rule violations including serialized context and (future) remediation status.
+
+        **Current Enforced Rule Type**
+        - `position_weight`: Blocks BUY if projected position weight > threshold (ignores very first single seeding of an otherwise empty portfolio).
+        - `max_trade_notional_pct` (Phase 11): Blocks BUY if single order notional / equity exceeds threshold.
+        - `sector_aggregate_weight` (Phase 11): Blocks BUY if projected sector weight (including order) exceeds threshold; skipped gracefully if no sector map present.
+
+        **Execution Integration**
+        - `execute_orders(..., enforce_governance=True)` evaluates active rules via `evaluate_pre_trade_rules` before committing BUYs.
+        - On block: order tagged `blocked_governance`; a breach + audit_event recorded.
+        - Default flag is False to preserve existing flows unless explicitly enabled.
+
+        **Snapshots**
+        - Call `save_config_snapshot(kind, payload_dict)` to persist a hash-linked version (e.g., `risk_config`).
+        - UI governance page offers an ad-hoc snapshot form & recent history panel.
+
+        **Audit Chain Usage**
+        - `log_audit_event(category, payload, ref_type?, ref_id?)` appends an event.
+        - `verify_audit_chain()` returns False if any tampering detected.
+
+    **Phase 11 Additions**
+    - `risk_event` table: Hash‑chained log for concentration, drawdown, volatility, VaR triggers.
+    - Governance console: Risk events panel (recent events with hashes).
+    - Additional rule evaluators (`max_trade_notional_pct`, `sector_aggregate_weight`).
+    - Exposure scalar utility factoring regime probabilities + open breach count.
+
+    **Extensibility Roadmap**
+    - Additional rule types: turnover alias integration, dynamic drawdown blocklist.
+    - Scheduled integrity verification + alert if any hash chain breaks.
+    - UI JSON param editor & breach notes workflow.
+        """
+    )
+
+    st.subheader("�📊 Data Coverage & Provider Capabilities")
     st.markdown(
             """
             | Mode | Source | Typical Use | Notes |

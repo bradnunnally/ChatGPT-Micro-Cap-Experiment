@@ -5,6 +5,14 @@ import pandas as pd
 from tests.mock_streamlit import StreamlitMock
 
 
+@pytest.fixture(scope="session", autouse=True)
+def apply_migrations_once():
+    """Ensure all SQL migrations (including governance tables) are applied before tests."""
+    from apply_migrations import main as apply_migrations_main
+
+    apply_migrations_main()
+
+
 @pytest.fixture(autouse=True)
 def cleanup_db():
     """Clean up any database connections."""

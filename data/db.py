@@ -107,6 +107,64 @@ SCHEMA_STATEMENTS = [
         blocked INTEGER NOT NULL DEFAULT 0
     );
     """,
+    # Governance & compliance (also created via migration 0002, duplicated here for test env convenience)
+    """
+    CREATE TABLE IF NOT EXISTS policy_rule (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        rule_type TEXT NOT NULL,
+        threshold REAL,
+        severity TEXT NOT NULL DEFAULT 'warn',
+        active INTEGER NOT NULL DEFAULT 1,
+        params_json TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS audit_event (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL DEFAULT (datetime('now')),
+        category TEXT NOT NULL,
+        ref_type TEXT,
+        ref_id TEXT,
+        payload_json TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        prev_hash TEXT
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS config_snapshot (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL DEFAULT (datetime('now')),
+        kind TEXT NOT NULL,
+        content_json TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        prev_hash TEXT
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS breach_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL DEFAULT (datetime('now')),
+        rule_code TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        context_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        auto_action TEXT,
+        notes TEXT
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS risk_event (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL DEFAULT (datetime('now')),
+        event_type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        prev_hash TEXT
+    );
+    """,
 ]
 
 # Backward-compat schema string for tests that import SCHEMA
