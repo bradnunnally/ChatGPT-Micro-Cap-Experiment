@@ -78,10 +78,42 @@ st.header("Portfolio Dashboard")
 
 
 def main() -> None:
-    """Application entry point."""
+    """Main entry point for the portfolio manager application."""
+    import sys
+    import subprocess
+    
+    # Check if running as streamlit command-line entry point
+    if len(sys.argv) > 1 and sys.argv[0].endswith('portfolio-manager'):
+        # Running from command line - start streamlit
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        app_file = os.path.join(current_dir, "app.py")
+        
+        # Launch streamlit
+        cmd = [
+            sys.executable, "-m", "streamlit", "run", app_file,
+            "--server.headless=true",
+            "--server.port=8501",
+            "--browser.gatherUsageStats=false",
+            "--server.address=localhost"
+        ]
+        
+        try:
+            subprocess.run(cmd, check=True)
+        except KeyboardInterrupt:
+            print("\n👋 Portfolio Manager stopped.")
+        except Exception as e:
+            print(f"❌ Error starting Portfolio Manager: {e}")
+            sys.exit(1)
+    else:
+        # Running directly in streamlit - render dashboard
+        render_dashboard()
 
+
+def streamlit_main() -> None:
+    """Streamlit-specific main function."""
     render_dashboard()
 
 
 if __name__ == "__main__":
-    main()
+    # When running directly with python app.py, use streamlit mode
+    streamlit_main()

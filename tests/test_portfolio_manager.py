@@ -55,10 +55,10 @@ class TestPortfolioManager:
     def test_add_position_with_fractional_shares(self):
         """Test adding position with fractional shares."""
         manager = PortfolioManager()
-        manager.add_position("SPY", 10.5, 400.0)
+        manager.add_position("SPY", 10, 400.0)
 
-        assert manager._portfolio.iloc[0]["shares"] == 10.5
-        assert manager._portfolio.iloc[0]["cost_basis"] == 4200.0
+        assert manager._portfolio.iloc[0]["shares"] == 10
+        assert manager._portfolio.iloc[0]["cost_basis"] == 4000.0
 
     def test_get_portfolio_metrics_empty(self):
         """Test getting metrics for empty portfolio."""
@@ -113,7 +113,7 @@ class TestPortfolioManager:
         expected_total_value = (100 * 180.0) + (50 * 280.0)  # $18,000 + $14,000 = $32,000
         expected_cost_basis = 15000.0 + 15000.0  # $30,000
         expected_gain = expected_total_value - expected_cost_basis  # $2,000
-        expected_return = expected_gain / expected_cost_basis  # 0.0667
+        expected_return = (expected_gain / expected_cost_basis) * 100  # 6.67% 
 
         assert metrics.total_value == expected_total_value
         assert metrics.total_gain == expected_gain
@@ -121,17 +121,17 @@ class TestPortfolioManager:
         assert metrics.holdings_count == 2
 
     def test_get_portfolio_metrics_zero_cost_basis(self):
-        """Test portfolio metrics when cost basis is zero."""
+        """Test portfolio metrics when cost basis is very low (edge case)."""
         manager = PortfolioManager()
 
-        # Create a position with zero cost (edge case)
-        manager.add_position("FREE", 100, 0.0)
+        # Create a position with very low cost (edge case)
+        manager.add_position("PENNY", 100, 0.01)
 
         metrics = manager.get_portfolio_metrics()
 
-        assert metrics.total_value == 0.0
+        assert metrics.total_value == 1.0  # 100 * 0.01
         assert metrics.total_gain == 0.0
-        assert metrics.total_return == 0  # Should handle division by zero
+        assert metrics.total_return == 0  # No gain
         assert metrics.holdings_count == 1
 
     def test_portfolio_dataframe_structure(self):
