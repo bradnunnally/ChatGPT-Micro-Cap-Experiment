@@ -1,0 +1,18 @@
+include README.md
+include requirements.txt
+include .env.template
+include LICENSE
+recursive-include data *.sql
+recursive-include migrations *.sql
+recursive-include ui *.py
+recursive-include pages *.py
+recursive-include services *.py
+recursive-include config *.py
+recursive-include components *.py
+recursive-include core *.py
+recursive-include infra *.py
+recursive-exclude tests *
+recursive-exclude archive *
+recursive-exclude .pytest_cache *
+recursive-exclude __pycache__ *
+global-exclude *.pyc
