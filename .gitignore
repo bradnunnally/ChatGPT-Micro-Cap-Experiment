@@ -51,6 +51,7 @@ Documents/
 # === Environment Variables ===
 *.env
 .env
+.env.template
 
 # App caches and local data
 data/cache/
@@ -66,5 +67,3 @@ archive/
 
 # === Local snapshot releases ===
 dist/
-deploy/
-

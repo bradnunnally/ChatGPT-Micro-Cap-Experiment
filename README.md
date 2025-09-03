@@ -320,3 +320,71 @@ rm -rf dist/release-1.0.0
 - Fast rebuild time (rsync + pip install)
 
 If you need a single-file binary later, you can explore PyInstaller—see project notes or ask for a recipe.
+
+## macOS: Automator Launcher
+
+If you'd like a double-clickable macOS app that starts the Streamlit UI and opens your browser, use the included Automator-friendly launcher script at `macos/launch_portfolio_manager.sh`.
+
+Prerequisites:
+- Ensure the repository is on the Mac you want to run from and that the launcher script is executable.
+- Optional but recommended: create the local virtualenv used by development (the script will activate `.venv` if present).
+
+Make the launcher executable (run from the repo root):
+
+```bash
+chmod +x macos/launch_portfolio_manager.sh
+```
+
+Quick manual test (run in a terminal from the repo root):
+
+```bash
+./macos/launch_portfolio_manager.sh
+# then visit http://localhost:8501 if the browser doesn't open automatically
+```
+
+Create an Automator Application (double-clickable):
+
+1. Open the Automator app on macOS.
+2. Choose "New Document" → "Application".
+3. In the Actions library search for "Run Shell Script" and drag it into the workflow pane.
+4. Set the shell to `/bin/zsh` and paste the following script, replacing the path if your checkout is in a different location:
+
+```bash
+cd "/Users/bradnunnally/ChatGPT-Micro-Cap-Experiment"
+./macos/launch_portfolio_manager.sh
+```
+
+5. Save the Automator application (for example: `Portfolio Manager.app`) somewhere convenient (Applications or Desktop).
+6. Double-click the saved `.app` to launch the Streamlit app. The default browser should open to the UI and logs are written to `logs/streamlit.out` in the repo.
+
+Troubleshooting:
+- If nothing happens when you double-click the Automator app, open Terminal and run the launcher manually to see output:
+
+```bash
+cd "/Users/bradnunnally/ChatGPT-Micro-Cap-Experiment"
+./macos/launch_portfolio_manager.sh
+tail -n 200 logs/streamlit.out
+```
+
+- If the script can't find the virtualenv, create it with the project's Makefile helper:
+
+```bash
+make install
+```
+
+- To stop a running Streamlit started by the launcher, find and kill the process (example):
+
+```bash
+ps aux | grep streamlit
+kill <pid>
+```
+
+Optional enhancements:
+- Add the saved Automator app to the Dock for one-click access.
+- Create a `launchd` plist to auto-start the Automator app at login (advanced).
+
+----
+
+Requirements coverage:
+- Add Automator instructions to `README.md` — Done
+- Provide step-by-step Automator setup + troubleshooting — Done

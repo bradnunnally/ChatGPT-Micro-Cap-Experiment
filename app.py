@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import os
+import sys
 
 import streamlit as st
 
@@ -77,36 +78,38 @@ navbar(Path(__file__).name)
 st.header("Portfolio Dashboard")
 
 
-def main() -> None:
+def main():
     """Main entry point for the portfolio manager application."""
-    import sys
-    import subprocess
+    # Add current directory to Python path
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
     
-    # Check if running as streamlit command-line entry point
-    if len(sys.argv) > 1 and sys.argv[0].endswith('portfolio-manager'):
-        # Running from command line - start streamlit
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        app_file = os.path.join(current_dir, "app.py")
-        
-        # Launch streamlit
-        cmd = [
-            sys.executable, "-m", "streamlit", "run", app_file,
-            "--server.headless=true",
-            "--server.port=8501",
-            "--browser.gatherUsageStats=false",
-            "--server.address=localhost"
-        ]
-        
-        try:
-            subprocess.run(cmd, check=True)
-        except KeyboardInterrupt:
-            print("\n👋 Portfolio Manager stopped.")
-        except Exception as e:
-            print(f"❌ Error starting Portfolio Manager: {e}")
-            sys.exit(1)
-    else:
-        # Running directly in streamlit - render dashboard
-        render_dashboard()
+    # Set production defaults for deployment
+    if not os.path.exists('.env'):
+        print("⚠️  No .env file found. Creating production template...")
+        print("📝 Please edit .env and add your FINNHUB_API_KEY")
+        with open('.env', 'w') as f:
+            f.write("# Portfolio Manager Configuration\n")
+            f.write("APP_ENV=production\n")
+            f.write("FINNHUB_API_KEY=your_api_key_here\n")
+    
+    # Import and run streamlit
+    import subprocess
+    import streamlit.web.cli as stcli
+    
+    # Set up streamlit args
+    sys.argv = [
+        "streamlit",
+        "run",
+        os.path.join(current_dir, "app.py"),
+        "--server.headless=true",
+        "--server.port=8501",
+        "--browser.gatherUsageStats=false",
+    ]
+    
+    # Run streamlit
+    stcli.main()
 
 
 def streamlit_main() -> None:
