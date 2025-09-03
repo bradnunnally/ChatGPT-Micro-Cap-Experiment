@@ -9,7 +9,18 @@ import streamlit as st
 from app_settings import settings
 from components.nav import navbar
 
-st.set_page_config(page_title="Performance", layout="wide", initial_sidebar_state="collapsed")
+try:
+    # set_page_config can only be called once and must be the first Streamlit
+    # call on a page. When this module is imported after the app has already
+    # set a page config (for example, during dynamic imports from
+    # `render_dashboard()`), Streamlit raises StreamlitAPIException. Guard
+    # against that to keep imports safe during runtime and tests.
+    st.set_page_config(page_title="Performance", layout="wide", initial_sidebar_state="collapsed")
+except Exception:
+    # Ignore errors occurring when page config has already been set.
+    # This keeps module import safe when used as a helper (not as the main
+    # entry script) while preserving the configuration when possible.
+    pass
 
 navbar(Path(__file__).name)
 
@@ -21,23 +32,47 @@ def load_portfolio_history(db_path: str) -> pd.DataFrame:
     """Load portfolio history from the database including individual tickers."""
     conn = sqlite3.connect(db_path)
     query = """
-        SELECT date, ticker, total_equity, total_value 
+        SELECT date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity
         FROM portfolio_history 
         ORDER BY date;
     """
     df = pd.read_sql_query(query, conn, parse_dates=["date"])
     conn.close()
 
-    # Replace empty strings safely and convert to float without deprecated downcasting
-    te = df["total_equity"]
-    tv = df["total_value"]
-    df["total_equity"] = pd.to_numeric(te.mask(te == "", np.nan), errors="coerce")
-    df["total_value"] = pd.to_numeric(tv.mask(tv == "", np.nan), errors="coerce")
+    # Replace empty strings safely and convert relevant columns to numeric without deprecated downcasting
+    for col in [
+        "shares",
+        "cost_basis",
+        "stop_loss",
+        "current_price",
+        "total_value",
+        "pnl",
+        "cash_balance",
+        "total_equity",
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col].mask(df[col] == "", np.nan), errors="coerce")
 
-    # Drop rows where both values are NaN
-    df = df.dropna(subset=["total_equity", "total_value"], how="all")
+    # Drop rows where both total_equity and total_value are NaN (no meaningful data)
+    if "total_equity" in df.columns and "total_value" in df.columns:
+        df = df.dropna(subset=["total_equity", "total_value"], how="all")
 
     return df
+
+
+def load_portfolio_history_snapshot(db_path: str, months: int = 6) -> pd.DataFrame:
+    """Return a snapshot of portfolio history for the past `months` months (by calendar days).
+
+    This is a convenience used by summary/KPI generation to obtain a recent window
+    without re-running the full page logic.
+    """
+    df = load_portfolio_history(db_path)
+    if df.empty:
+        return df
+    end = df["date"].max()
+    start = end - pd.DateOffset(months=months)
+    mask = (df["date"] >= start) & (df["date"] <= end)
+    return df.loc[mask]
 
 
 def create_performance_chart(hist_filtered: pd.DataFrame) -> tuple[go.Figure, dict]:
@@ -55,21 +90,9 @@ def create_performance_chart(hist_filtered: pd.DataFrame) -> tuple[go.Figure, di
         "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"
     ]
     
-    # Add overall portfolio performance line
-    portfolio_data = hist_filtered[hist_filtered["ticker"] == "TOTAL"]
-    portfolio_color = "#1f77b4"
-    fig.add_trace(
-        go.Scatter(
-            x=portfolio_data["date"],
-            y=portfolio_data["total_equity"],
-            name="Overall Portfolio",
-            line=dict(width=3, color=portfolio_color),
-        )
-    )
-    legend_info["Overall Portfolio"] = portfolio_color
-
+    # Do not plot the overall portfolio line on the chart (KPIs still use TOTAL rows).
     # Add individual ticker performance lines
-    color_index = 1  # Start from second color since first is used for Overall Portfolio
+    color_index = 0
     for ticker in hist_filtered["ticker"].unique():
         if ticker != "TOTAL":
             ticker_data = hist_filtered[hist_filtered["ticker"] == ticker]
@@ -218,14 +241,41 @@ def main() -> None:
         )
         return
 
-    min_date = history["date"].min().date()
+    # Default to last 6 months for exploration, fallback to full range if not available
     max_date = history["date"].max().date()
-    start_date, end_date = st.date_input(
-        "Select date range",
-        value=(min_date, max_date),
-        min_value=min_date,
-        max_value=max_date,
-    )
+    six_months_ago = (history["date"].max() - pd.DateOffset(months=6)).date()
+    min_date = history["date"].min().date()
+    default_start = six_months_ago if six_months_ago > min_date else min_date
+    # Use two separate calendar widgets for Start and End dates to avoid
+    # unpacking issues and improve UX. Display the selected dates formatted
+    # as MM-DD-YYYY for clarity below the inputs.
+    default_start = six_months_ago if six_months_ago > min_date else min_date
+    # Use two native calendar widgets for Start and End dates. Display the
+    # selected range beneath them formatted as MM-DD-YYYY for readability.
+    col_start, col_end = st.columns(2)
+    with col_start:
+        start_date = st.date_input(
+            "Start date",
+            value=default_start,
+            min_value=min_date,
+            max_value=max_date,
+            key="perf_start",
+        )
+    with col_end:
+        end_date = st.date_input(
+            "End date",
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date,
+            key="perf_end",
+        )
+
+    # Ensure start_date <= end_date; swap if user selected in reverse order
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    # Show formatted selected range
+    st.markdown(f"**Selected range:** {start_date.strftime('%m-%d-%Y')} — {end_date.strftime('%m-%d-%Y')}")
 
     mask = (history["date"] >= pd.to_datetime(start_date)) & (
         history["date"] <= pd.to_datetime(end_date)

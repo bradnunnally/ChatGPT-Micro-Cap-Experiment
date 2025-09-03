@@ -1,6 +1,7 @@
 from datetime import datetime
 import os
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -190,18 +191,20 @@ def render_dashboard() -> None:
         summary_df["Quality Metric"] = ""
 
         mask_positions = summary_df["Ticker"] != "TOTAL"
+
+        # Convert any infinite values to NaN explicitly (pd option deprecated)
+        summary_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
         if denom:
             # Position weight (%) of total equity
-            with pd.option_context("mode.use_inf_as_na", True):
-                summary_df.loc[mask_positions, "Market/Value Metric"] = (
-                    (summary_df.loc[mask_positions, "Total Value"].astype(float) / denom) * 100.0
-                ).round(2)
+            total_vals = pd.to_numeric(summary_df.loc[mask_positions, "Total Value"], errors="coerce")
+            summary_df.loc[mask_positions, "Market/Value Metric"] = ((total_vals / denom) * 100.0).round(2)
         else:
             summary_df.loc[mask_positions, "Market/Value Metric"] = 0.0
 
         # Quality metric: ROI % ((Current - Cost)/Cost) * 100; guard divide by zero
-        cost = summary_df.loc[mask_positions, "Cost Basis"].replace({0: pd.NA}).astype(float)
-        cur = summary_df.loc[mask_positions, "Current Price"].astype(float)
+        cost = pd.to_numeric(summary_df.loc[mask_positions, "Cost Basis"].replace({0: pd.NA}), errors="coerce")
+        cur = pd.to_numeric(summary_df.loc[mask_positions, "Current Price"], errors="coerce")
         roi = ((cur - cost) / cost * 100.0).round(2)
         roi = roi.fillna(0.0)
         summary_df.loc[mask_positions, "Quality Metric"] = roi
@@ -445,10 +448,35 @@ def render_dashboard() -> None:
         st.subheader("Daily Summary")
         if st.button("Generate Daily Summary", type="primary"):
             if not summary_df.empty:
-                # Build new structured data payload for enhanced summary renderer
-                holdings_payload = []
+                # Prefer a 6-month snapshot from history to fill any missing fields
+                from pages.performance_page import load_portfolio_history_snapshot
+                from ui.summary import history_to_portfolio_snapshot
+
+                history = load_portfolio_history_snapshot(str(settings.paths.db_file), months=6)
+                hist_snap = history_to_portfolio_snapshot(history, as_of_months=6)
+
+                # Merge live summary_df per-position rows with history snapshot (history provides shares/cost when missing)
                 positions_only = summary_df[summary_df["Ticker"] != "TOTAL"].copy()
-                for _, row in positions_only.iterrows():
+                merged = positions_only.copy()
+                if not hist_snap.empty:
+                    # Index by ticker for simple left-join
+                    hist_idx = hist_snap.set_index("Ticker")
+                    def _fill(row):
+                        t = row.get("Ticker")
+                        if t in hist_idx.index:
+                            h = hist_idx.loc[t]
+                            # Only fill missing numeric fields
+                            if pd.isna(row.get("Shares")) and not pd.isna(h.get("Shares")):
+                                row["Shares"] = h.get("Shares")
+                            if pd.isna(row.get("Cost Basis")) and not pd.isna(h.get("Cost Basis")):
+                                row["Cost Basis"] = h.get("Cost Basis")
+                            if pd.isna(row.get("Current Price")) and not pd.isna(h.get("Current Price")):
+                                row["Current Price"] = h.get("Current Price")
+                        return row
+                    merged = merged.apply(_fill, axis=1)
+
+                holdings_payload = []
+                for _, row in merged.iterrows():
                     holdings_payload.append(
                         {
                             "ticker": row.get("Ticker"),
@@ -458,7 +486,7 @@ def render_dashboard() -> None:
                             "costPerShare": row.get("Cost Basis"),
                             "currentPrice": row.get("Current Price"),
                             # Map any existing stop fields; default None
-                            "stopType": "None",  # legacy data doesn't track stops yet
+                            "stopType": "None",
                             "stopPrice": None,
                             "trailingStopPct": None,
                             "marketCap": row.get("Market Cap"),
@@ -467,9 +495,20 @@ def render_dashboard() -> None:
                             "catalystDate": row.get("Catalyst"),
                         }
                     )
+
+                cash_balance = 0.0
+                if "Cash Balance" in summary_df and not summary_df.get("Cash Balance").dropna().empty:
+                    cash_balance = float(summary_df.get("Cash Balance").dropna().iloc[-1])
+                elif not hist_snap.empty and "Cash Balance" in hist_snap.columns and not hist_snap[hist_snap["Ticker"] == "TOTAL"].empty:
+                    # hist_snap stores TOTAL row as Cash Balance on TOTAL
+                    try:
+                        cash_balance = float(hist_snap.loc[hist_snap["Ticker"] == "TOTAL", "Cash Balance"].iloc[-1])
+                    except Exception:
+                        cash_balance = 0.0
+
                 payload = {
                     "asOfDate": datetime.now().strftime("%Y-%m-%d"),
-                    "cashBalance": float(summary_df.get("Cash Balance").dropna().iloc[-1]) if "Cash Balance" in summary_df else 0.0,
+                    "cashBalance": cash_balance,
                     "holdings": holdings_payload,
                     "notes": {"materialNewsToday": "N/A", "catalystNotes": []},
                 }

@@ -371,3 +371,41 @@ def build_daily_summary(portfolio_data: pd.DataFrame) -> str:
         return "\n".join(summary)
     except Exception as e:
         return f"Error generating summary: {str(e)}"
+
+
+def history_to_portfolio_snapshot(history_df: pd.DataFrame, as_of_months: int = 6) -> pd.DataFrame:
+    """Convert a portfolio history DataFrame (date,ticker,total_value,total_equity) into
+    a portfolio snapshot DataFrame compatible with `build_daily_summary`.
+
+    The function picks the most recent date within the last `as_of_months` months and
+    returns rows for each ticker plus a TOTAL row if available.
+    """
+    if history_df is None or history_df.empty:
+        return pd.DataFrame()
+    # Ensure date is datetime
+    df = history_df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+        df["date"] = pd.to_datetime(df["date"])
+    end = df["date"].max()
+    start = end - pd.DateOffset(months=as_of_months)
+    mask = (df["date"] >= start) & (df["date"] <= end)
+    window = df.loc[mask]
+    if window.empty:
+        return pd.DataFrame()
+    latest = window.loc[window["date"] == window["date"].max()]
+    # Build snapshot rows, preserving shares and cost_basis when present in history
+    rows = []
+    for _, r in latest.iterrows():
+        rows.append(
+            {
+                "Ticker": r.get("ticker"),
+                "Shares": r.get("shares") if pd.notna(r.get("shares")) else None,
+                "Cost Basis": r.get("cost_basis") if pd.notna(r.get("cost_basis")) else None,
+                "Current Price": r.get("current_price") if pd.notna(r.get("current_price")) else None,
+                "Total Value": r.get("total_value") if pd.notna(r.get("total_value")) else None,
+                "Total Equity": r.get("total_equity") if r.get("ticker") == "TOTAL" and pd.notna(r.get("total_equity")) else None,
+                "Cash Balance": r.get("cash_balance") if r.get("ticker") == "TOTAL" and pd.notna(r.get("cash_balance")) else None,
+                "PnL": r.get("pnl") if pd.notna(r.get("pnl")) else None,
+            }
+        )
+    return pd.DataFrame(rows)
