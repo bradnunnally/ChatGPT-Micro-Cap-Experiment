@@ -273,10 +273,22 @@ def render_dashboard() -> None:
 
             # Decide caption text
             caption_txt = "Provider: "
-            if st.session_state.get("use_micro_providers"):
-                caption_txt += "Finnhub" if app_env == "production" else "Synthetic"
+            
+            # In production mode, use micro providers if FINNHUB_API_KEY is set
+            use_micro = st.session_state.get("use_micro_providers", False)
+            if app_env == "production":
+                # In production, automatically use Finnhub if API key is available
+                finnhub_key = os.getenv("FINNHUB_API_KEY", "").strip()
+                if finnhub_key:
+                    caption_txt += "Finnhub (Production)"
+                else:
+                    caption_txt += "Disabled (No API Key)"
             else:
-                caption_txt += "Disabled (fallback only)"
+                # In dev/other modes, respect the toggle
+                if use_micro:
+                    caption_txt += "Synthetic (Development)"
+                else:
+                    caption_txt += "Disabled (fallback only)"
             st.caption(caption_txt)
 
         port_table = summary_df[summary_df["Ticker"] != "TOTAL"].copy()

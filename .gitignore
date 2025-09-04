@@ -52,6 +52,7 @@ Documents/
 *.env
 .env
 .env.template
+.env.example
 
 # App caches and local data
 data/cache/
