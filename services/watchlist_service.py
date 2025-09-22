@@ -107,8 +107,31 @@ def load_watchlist_prices(df: pd.DataFrame) -> pd.DataFrame:
         result.at[idx, "current_price"] = price
 
         if "last_price" in result.columns and price is not None:
-            last_price = row["last_price"]
-            result.at[idx, "change"] = price - last_price
-            result.at[idx, "change_pct"] = ((price - last_price) / last_price) * 100
+            if pd.isna(price):
+                result.at[idx, "change"] = None
+                result.at[idx, "change_pct"] = None
+                continue
+
+            last_price_raw = row["last_price"]
+
+            if last_price_raw is None or pd.isna(last_price_raw):
+                result.at[idx, "change"] = None
+                result.at[idx, "change_pct"] = None
+                continue
+
+            try:
+                current_price = float(price)
+                last_price = float(last_price_raw)
+            except (TypeError, ValueError):
+                result.at[idx, "change"] = None
+                result.at[idx, "change_pct"] = None
+                continue
+
+            result.at[idx, "change"] = current_price - last_price
+            if last_price > 0:
+                result.at[idx, "change_pct"] = ((current_price - last_price) / last_price) * 100
+            else:
+                # Avoid division by zero or negative baselines when data is missing or invalid
+                result.at[idx, "change_pct"] = None
 
     return result

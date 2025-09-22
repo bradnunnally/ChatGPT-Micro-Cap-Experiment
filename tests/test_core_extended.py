@@ -89,6 +89,72 @@ class TestTradingServiceCore:
         assert result.success is True
         assert "Sold" in result.message
 
+    def test_trading_service_requires_positive_buy_shares(self, mock_sell, mock_buy):
+        """Buy orders must specify a positive share count."""
+        from services.core.trading_service import TradingService
+        from services.core.portfolio_service import PortfolioService
+        from services.core.market_service import MarketService
+
+        mock_portfolio = Mock(spec=PortfolioService)
+        mock_market = Mock(spec=MarketService)
+
+        service = TradingService(mock_portfolio, mock_market)
+
+        result = service.buy_stock("AAPL", 0, 150.0)
+        assert result.success is False
+        assert "positive" in result.message.lower()
+        mock_portfolio.add_position.assert_not_called()
+
+        result = service.buy_stock("AAPL", -5, 150.0)
+        assert result.success is False
+        assert "positive" in result.message.lower()
+        mock_portfolio.add_position.assert_not_called()
+
+    def test_trading_service_requires_positive_sell_shares(self, mock_sell, mock_buy):
+        """Sell orders must specify a positive share count."""
+        from services.core.trading_service import TradingService
+        from services.core.portfolio_service import PortfolioService
+        from services.core.market_service import MarketService
+
+        mock_portfolio = Mock(spec=PortfolioService)
+        mock_market = Mock(spec=MarketService)
+
+        service = TradingService(mock_portfolio, mock_market)
+
+        result = service.sell_stock("AAPL", 0, 150.0)
+        assert result.success is False
+        assert "positive" in result.message.lower()
+        mock_market.get_current_price.assert_not_called()
+
+        result = service.sell_stock("AAPL", -1, 150.0)
+        assert result.success is False
+        assert "positive" in result.message.lower()
+        mock_market.get_current_price.assert_not_called()
+
+    def test_trading_service_partial_sale_updates_position(self, mock_sell, mock_buy):
+        """Partial sales should update remaining shares and cost basis."""
+        from services.core.trading_service import TradingService
+        from services.core.portfolio_service import PortfolioService, Position
+        from services.core.market_service import MarketService
+
+        portfolio = PortfolioService()
+        portfolio.add_position(Position(ticker="AAPL", shares=10, price=100.0, cost_basis=1000.0))
+
+        mock_market = Mock(spec=MarketService)
+        mock_market.get_current_price.return_value = 150.0
+
+        service = TradingService(portfolio, mock_market)
+
+        result = service.sell_stock("AAPL", 4, 150.0)
+
+        assert result.success is True
+        df = portfolio.to_dataframe()
+        remaining_shares = df.loc[df["ticker"] == "AAPL", "shares"].iloc[0]
+        remaining_cost_basis = df.loc[df["ticker"] == "AAPL", "cost_basis"].iloc[0]
+
+        assert remaining_shares == 6
+        assert pytest.approx(600.0) == remaining_cost_basis
+
 
 class TestValidationServiceCore:
     """Test core validation service functionality."""

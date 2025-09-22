@@ -15,6 +15,31 @@ def test_add_position():
     assert df.iloc[0]["shares"] == 100
 
 
+def test_add_position_merges_existing_ticker():
+    """Repeat buys should accumulate shares and cost basis instead of overwriting."""
+    service = PortfolioService()
+    service.add_position(Position("AAPL", 100, 150.0, 14000.0, stop_loss=120.0))
+    service.add_position(Position("AAPL", 50, 155.0, 8000.0))
+
+    df = service.to_dataframe()
+
+    assert len(df) == 1
+    assert df.iloc[0]["ticker"] == "AAPL"
+    assert df.iloc[0]["shares"] == 150
+    assert df.iloc[0]["cost_basis"] == 22000.0
+    assert df.iloc[0]["price"] == 155.0
+    assert df.iloc[0]["stop_loss"] == 120.0
+
+    metrics = service.get_metrics()
+
+    expected_total_value = 150 * 155.0
+    expected_gain = expected_total_value - 22000.0
+
+    assert metrics.total_value == expected_total_value
+    assert metrics.total_gain == expected_gain
+    assert metrics.holdings_count == 1
+
+
 def test_portfolio_metrics():
     """Test portfolio metrics calculation."""
     service = PortfolioService()
