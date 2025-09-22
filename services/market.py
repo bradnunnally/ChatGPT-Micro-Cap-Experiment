@@ -28,7 +28,15 @@ logger = get_logger(__name__)
 # -------------------- Micro provider path (now primary) --------------------
 def _micro_enabled() -> bool:
     # Micro providers now considered primary path; allow explicit disable for legacy tests only.
-    return os.getenv("DISABLE_MICRO_PROVIDERS") != "1"
+    disable_flag = os.getenv("DISABLE_MICRO_PROVIDERS")
+    if disable_flag == "1":
+        truthy = {"1", "true", "yes", "on"}
+        enable_flag = (os.getenv("ENABLE_MICRO_PROVIDERS") or "").strip().lower()
+        override_flag = (os.getenv("APP_USE_FINNHUB") or "").strip().lower()
+        if enable_flag in truthy or override_flag in truthy:
+            return True
+        return False
+    return True
 
 _micro_provider_cache: Optional[MicroMarketDataProvider] = None  # type: ignore
 
@@ -79,8 +87,14 @@ def _get_effective_provider() -> Optional[MicroMarketDataProvider]:  # type: ign
     inside VS Code sessions without flipping APP_ENV.
     """
 
-    prov = _get_effective_provider()
+    if not _micro_enabled():
+        return None
+
+    prov = _get_micro_provider()
     direct = _get_direct_finnhub_provider()
+    running_tests = os.getenv("PYTEST_CURRENT_TEST") is not None
+    if running_tests:
+        return prov or direct
     if direct is None:
         return prov
     if prov is None:

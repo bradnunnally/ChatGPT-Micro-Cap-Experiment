@@ -36,6 +36,25 @@ def watchlist_page():
     navbar(Path(__file__).name)
     st.title("Watchlist")
 
+    # Track pending watchlist buy when modal API unavailable
+    if "watchlist_buy_ticker" not in st.session_state:
+        st.session_state["watchlist_buy_ticker"] = None
+    def _trigger_rerun() -> None:
+        if hasattr(st, "rerun"):
+            st.rerun()
+        else:  # pragma: no cover - legacy Streamlit versions
+            st.experimental_rerun()
+
+    def handle_watchlist_buy_success(symbol: str) -> None:
+        try:
+            remove_from_watchlist(symbol)
+        finally:
+            if "watchlist_buy_ticker" in st.session_state:
+                st.session_state["watchlist_buy_ticker"] = None
+            st.session_state.pop("buy_form_open", None)
+            st.session_state.pop("s_owned_total", None)
+            _trigger_rerun()
+
     # Add-ticker input with placeholder
     # wrap in a narrow column (30% width)
     input_col, _ = st.columns([3, 7])
@@ -96,10 +115,26 @@ def watchlist_page():
                 remove_from_watchlist(ticker)
                 st.rerun()
             if row_cols[4].button("Buy", key=f"buy_{ticker}"):
-                with st.modal(f"Buy {ticker}"):
-                    show_buy_form(ticker_default=ticker)
+                if hasattr(st, "modal"):
+                    with st.modal(f"Buy {ticker}"):
+                        show_buy_form(ticker_default=ticker, on_success=handle_watchlist_buy_success)
+                else:
+                    st.session_state["watchlist_buy_ticker"] = ticker
+                    st.session_state["buy_form_open"] = True
+                    _trigger_rerun()
     else:
         st.write("Your watchlist is empty. Add some tickers above!")
+
+    if not hasattr(st, "modal"):
+        pending = st.session_state.get("watchlist_buy_ticker")
+        if pending:
+            st.divider()
+            st.subheader(f"Buy {pending}")
+            show_buy_form(ticker_default=pending, on_success=handle_watchlist_buy_success)
+            if st.button("Close Buy Form", key="close_watchlist_buy"):
+                st.session_state["watchlist_buy_ticker"] = None
+                st.session_state.pop("buy_form_open", None)
+                _trigger_rerun()
 
 
 if __name__ == "__main__":

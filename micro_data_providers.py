@@ -269,7 +269,7 @@ class FinnhubDataProvider:
         path = self._quote_path(ticker)
         if _is_fresh(path, self.quote_ttl_s):
             data = _read_json(path) or {}
-            if data.get("day_high") is not None and data.get("day_low") is not None:
+            if data.get("price") is not None:
                 logger.debug("cache_hit quote %s", ticker)
                 return data
             logger.debug("cache_stale quote %s", ticker)
