@@ -269,17 +269,27 @@ class FinnhubDataProvider:
         path = self._quote_path(ticker)
         if _is_fresh(path, self.quote_ttl_s):
             data = _read_json(path) or {}
-            logger.debug("cache_hit quote %s", ticker)
-            return data
+            if data.get("day_high") is not None and data.get("day_low") is not None:
+                logger.debug("cache_hit quote %s", ticker)
+                return data
+            logger.debug("cache_stale quote %s", ticker)
         logger.debug("cache_miss quote %s", ticker)
         client = self._client_get()
         data = self._call(client.quote, ticker)
-        # Finnhub quote fields: c (current), pc (prev close)
+        # Finnhub quote fields: c (current), pc (prev close), h (day high), l (day low)
         price = data.get("c")
         prev = data.get("pc") or 0
         change = (price - prev) if (price is not None and prev) else None
         percent = (change / prev * 100.0) if (change is not None and prev) else None
-        mapped = {"price": price, "change": change, "percent": percent}
+        mapped = {
+            "price": price,
+            "change": change,
+            "percent": percent,
+            "day_high": data.get("h"),
+            "day_low": data.get("l"),
+            "open": data.get("o"),
+            "prev_close": data.get("pc"),
+        }
         _write_json(path, mapped)
         return mapped
 
