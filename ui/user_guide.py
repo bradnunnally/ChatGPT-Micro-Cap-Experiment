@@ -45,9 +45,9 @@ def show_user_guide() -> None:
         st.subheader("💡 Key Features")
         st.markdown(
             """
-            - **Real-time Market Data**: Powered by Yahoo Finance for live stock prices
+            - **Real-time Market Data**: Switch between Finnhub (production) and deterministic synthetic data (development)
             - **SQLite Database**: All data stored locally in `data/trading.db`
-            - **Comprehensive Testing**: 82% test coverage ensures reliability
+            - **Comprehensive Testing**: Extensive automated suite keeps regressions in check
             - **Responsive Design**: Clean, modern interface optimized for all devices
             - **Data Export**: Download portfolio snapshots as CSV files
             """
@@ -69,7 +69,9 @@ def show_user_guide() -> None:
             - **Data Storage**: Portfolio data persists between sessions in local SQLite database
             - **Market Hours**: Stock prices update during market hours (live data may have delays)
             - **Offline Capability**: Core functionality works without internet (using last known prices)
-            - **Testing**: Run `pytest` in the project directory to execute the test suite
+            - **Quitting the App**: Use the **Quit App** button in the header before closing the browser window to stop the Streamlit server
+            - **Logs**: macOS bundle writes to `~/Library/Logs/PortfolioManager/streamlit.out` for troubleshooting
+            - **Testing**: Run `pytest` in the project directory to execute the test suite (coverage gate enforced at 80%)
             """
         )
 
@@ -84,8 +86,8 @@ def show_user_guide() -> None:
             | Development | Synthetic Generator | Deterministic offline quotes & history | Zero network usage |
 
             **Capability Detection (automatic):**
-            - Quotes, Profile, News, Earnings Calendar: Enabled when Finnhub API key present.
-            - Daily Candles & Bid/Ask: Shown only if plan grants access; otherwise related columns (ADV20, Spread) are hidden.
+            - Quotes, Profile, News, Earnings Calendar: Enabled when a Finnhub API key is present.
+            - Daily Candles & Bid/Ask: Shown only if your plan grants access; otherwise related columns (ADV20, Spread) are hidden.
 
             When a capability is unavailable:
             - Dependent columns are omitted (e.g., Spread, ADV20).

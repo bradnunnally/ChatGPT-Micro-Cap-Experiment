@@ -32,6 +32,7 @@ RSYNC_EXCLUDES=(
   "--exclude" "dist"
   "--exclude" ".venv"
   "--exclude" "logs"
+  "--exclude" "data/cache"
   "--exclude" "*.log"
   "--exclude" ".DS_Store"
   "--exclude" "*.pyc"

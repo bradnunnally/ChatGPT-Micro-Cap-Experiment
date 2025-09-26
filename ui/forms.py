@@ -325,6 +325,7 @@ def show_sell_form() -> None:
             return
 
         owned_shares = float(matching[COL_SHARES].astype(float).sum())
+        max_shares = int(owned_shares)
         st.session_state.s_owned_total = owned_shares
         latest_price = float(matching.iloc[0][COL_PRICE])
         fetched_price = fetch_price(selected)
@@ -332,9 +333,9 @@ def show_sell_form() -> None:
 
         # Determine min/default values
         share_min = 1 if owned_shares > 0 else 0
-        share_default = int(owned_shares) if owned_shares >= 1 else 1
+        share_default = max_shares if max_shares > 0 else 1
 
-        if max_shares == 0:
+        if max_shares <= 0:
             st.info("You have no shares to sell for this ticker.")
             if st.button("Close", key="close_sell_form4", type="secondary"):
                 st.session_state.sell_form_open = False
@@ -355,6 +356,7 @@ def show_sell_form() -> None:
                 "Shares to sell",
                 min_value=share_min,
                 value=share_default,
+                max_value=max_shares if max_shares > 0 else 1,
                 step=1,
                 key="s_shares",
             )

@@ -1,11 +1,31 @@
 """Navigation bar component used across pages."""
 
 import base64
+import os
+import threading
+import time
 from pathlib import Path
 
 import streamlit as st
 
 from services.session import init_session_state
+
+
+def _shutdown_server() -> None:
+    """Initiate a graceful app shutdown after notifying the user."""
+
+    message = "Shutting down app…"
+    # toast available on newer Streamlit versions
+    if hasattr(st, "toast"):
+        st.toast(message, icon="👋")
+    else:  # pragma: no cover - legacy fallback
+        st.warning(message)
+
+    def _kill():
+        time.sleep(0.6)
+        os._exit(0)
+
+    threading.Thread(target=_kill, daemon=True).start()
 
 
 def navbar(active_page: str) -> None:
@@ -51,7 +71,12 @@ def navbar(active_page: str) -> None:
         unsafe_allow_html=True,
     )
 
-    st.title("AI Assisted Trading")
+    header_cols = st.columns([6, 1])
+    with header_cols[0]:
+        st.title("AI Assisted Trading")
+    with header_cols[1]:
+        if st.button("Quit App", key="quit_app", type="secondary"):
+            _shutdown_server()
 
     nav = st.container()
     with nav:
