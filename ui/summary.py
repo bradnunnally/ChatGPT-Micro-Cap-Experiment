@@ -1,3 +1,4 @@
+import logging
 import math
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -6,7 +7,18 @@ import numpy as np
 import pandas as pd
 
 from services.core.market_service import MarketService
+from utils.cache import get_cached_price_data, get_cached_price_history, warm_cache_for_symbols, COMMON_SYMBOLS
+from utils.error_handling import (
+    handle_summary_errors, 
+    handle_data_errors, 
+    safe_numeric_conversion,
+    create_empty_result,
+    validate_input_data
+)
 
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 MARKET_SERVICE = MarketService()
 DEFAULT_BENCHMARK = "^GSPC"
@@ -76,45 +88,26 @@ def fmt_stop(value: Any) -> str:
         return "—"
 
 
+@handle_summary_errors(fallback_value=create_empty_result('price_data'))
 def _fetch_price_volume(symbol: str, months: int = 3) -> Dict[str, Optional[float]]:
-    result: Dict[str, Optional[float]] = {"symbol": symbol, "close": None, "pct_change": None, "volume": None}
-    if not symbol:
-        return result
-
-    try:
-        hist = MARKET_SERVICE.fetch_history(symbol, months=months)
-    except Exception:
-        hist = pd.DataFrame()
-
-    if hist is None or hist.empty:
-        return result
-
-    df = hist.copy()
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        df = df.dropna(subset=["date"]).sort_values("date")
-
-    closes = pd.to_numeric(df.get("close"), errors="coerce") if "close" in df else pd.Series([], dtype=float)
-    closes = closes.dropna()
-    if closes.empty:
-        return result
-
-    close = float(closes.iloc[-1])
-    prev = float(closes.iloc[-2]) if len(closes) > 1 else None
-    pct = None
-    if prev and prev != 0:
-        pct = (close - prev) / prev * 100.0
-
-    volume_series = pd.to_numeric(df.get("volume"), errors="coerce") if "volume" in df else pd.Series([], dtype=float)
-    volume_series = volume_series.dropna()
-    volume = float(volume_series.iloc[-1]) if not volume_series.empty else None
-
-    result["close"] = close
-    result["pct_change"] = pct
-    result["volume"] = volume
-    return result
+    """
+    Fetch current price and volume data for a symbol using cache.
+    
+    Args:
+        symbol: Stock symbol to fetch
+        months: Unused parameter (kept for backward compatibility)
+        
+    Returns:
+        Dictionary with symbol, close, pct_change, volume data
+    """
+    if not symbol or not symbol.strip():
+        return {"symbol": symbol, "close": None, "pct_change": None, "volume": None}
+    
+    # Use cached price data with 5-minute TTL
+    return get_cached_price_data(symbol.strip().upper(), ttl_minutes=5)
 
 
+@handle_data_errors(fallback_value=False, log_level="debug")
 def _history_has_valid_equity(history: Optional[pd.DataFrame]) -> bool:
     if history is None or history.empty:
         return False
@@ -136,6 +129,7 @@ def _history_has_valid_equity(history: Optional[pd.DataFrame]) -> bool:
     return len(total_rows) >= 2
 
 
+@handle_data_errors(fallback_value=pd.DataFrame(), log_level="warning")
 def _build_portfolio_history_from_market(
     holdings_df: pd.DataFrame, cash_balance: float, months: int = 6
 ) -> pd.DataFrame:
@@ -144,10 +138,10 @@ def _build_portfolio_history_from_market(
     This creates a backfilled history showing what the portfolio value would have been
     if the current positions were held at historical prices.
     """
-    print(f"DEBUG: Building portfolio history from market data (months={months})")
+    logger.debug(f"Building portfolio history from market data (months={months})")
     
     if holdings_df is None or holdings_df.empty:
-        print("DEBUG: No holdings data available")
+        logger.debug("No holdings data available")
         return pd.DataFrame()
 
     series_map: Dict[str, pd.Series] = {}
@@ -162,23 +156,24 @@ def _build_portfolio_history_from_market(
         if shares is None or pd.isna(shares) or float(shares) == 0.0:
             continue
 
-        print(f"DEBUG: Fetching history for {ticker} ({shares} shares)")
+        logger.debug(f"Fetching history for {ticker} ({shares} shares)")
         
         try:
-            hist = MARKET_SERVICE.fetch_history(ticker, months=months)
+            # Use cached price history with 5-minute TTL
+            hist = get_cached_price_history(ticker, months=months, ttl_minutes=5)
             if hist is None or hist.empty:
-                print(f"DEBUG: No market history returned for {ticker}")
+                logger.debug(f"No market history returned for {ticker}")
                 failed_tickers.append(ticker)
                 continue
                 
         except Exception as e:
-            print(f"DEBUG: Failed to fetch history for {ticker}: {e}")
+            logger.warning(f"Failed to fetch history for {ticker}: {e}")
             failed_tickers.append(ticker)
             continue
 
         df = hist.copy()
         if "date" not in df.columns or "close" not in df.columns:
-            print(f"DEBUG: Missing required columns for {ticker}")
+            logger.debug(f"Missing required columns for {ticker}")
             failed_tickers.append(ticker)
             continue
             
@@ -188,35 +183,35 @@ def _build_portfolio_history_from_market(
         df = df.dropna(subset=["close"])
         
         if df.empty:
-            print(f"DEBUG: Empty history after cleaning for {ticker}")
+            logger.debug(f"Empty history after cleaning for {ticker}")
             failed_tickers.append(ticker)
             continue
 
-        print(f"DEBUG: Successfully loaded {len(df)} price points for {ticker}")
+        logger.debug(f"Successfully loaded {len(df)} price points for {ticker}")
         df = df.drop_duplicates(subset=["date"], keep="last").set_index("date")
         series_map[ticker] = df["close"] * float(shares)
 
     if failed_tickers:
-        print(f"DEBUG: Failed to load history for: {failed_tickers}")
+        logger.info(f"Failed to load history for: {failed_tickers}")
         
     if not series_map:
-        print("DEBUG: No valid price series found")
+        logger.warning("No valid price series found")
         return pd.DataFrame()
 
-    print(f"DEBUG: Combining {len(series_map)} price series")
+    logger.debug(f"Combining {len(series_map)} price series")
     combined = pd.concat(series_map.values(), axis=1)
     combined.columns = list(series_map.keys())
     combined = combined.sort_index().ffill().dropna(how="all")
 
     if combined.empty:
-        print("DEBUG: Combined series is empty")
+        logger.warning("Combined series is empty")
         return pd.DataFrame()
 
     total_value = combined.sum(axis=1)
     total_equity = total_value + float(cash_balance or 0.0)
 
-    print(f"DEBUG: Generated {len(total_equity)} portfolio value points")
-    print(f"DEBUG: Portfolio value range: ${total_equity.min():,.2f} - ${total_equity.max():,.2f}")
+    logger.info(f"Generated {len(total_equity)} portfolio value points")
+    logger.debug(f"Portfolio value range: ${total_equity.min():,.2f} - ${total_equity.max():,.2f}")
 
     result = pd.DataFrame({
         "date": total_equity.index,
@@ -226,6 +221,7 @@ def _build_portfolio_history_from_market(
     return result.reset_index(drop=True)
 
 
+@handle_summary_errors(fallback_value=(pd.DataFrame(), True))
 def get_portfolio_history_for_analytics(
     holdings_df: pd.DataFrame, 
     history_df: Optional[pd.DataFrame], 
@@ -236,41 +232,42 @@ def get_portfolio_history_for_analytics(
     Returns:
         tuple: (history_dataframe, is_synthetic_data)
     """
-    print("DEBUG: Getting portfolio history for analytics")
+    logger.debug("Getting portfolio history for analytics")
     
     # First, try to use actual stored history
     if history_df is not None and not history_df.empty:
         if _history_has_valid_equity(history_df):
             total_rows = history_df[history_df.get("ticker", history_df.get("Ticker", "")) == "TOTAL"]
             if len(total_rows) >= 10:  # Need at least 10 data points
-                print(f"DEBUG: Using actual stored history ({len(total_rows)} TOTAL rows)")
+                logger.info(f"Using actual stored history ({len(total_rows)} TOTAL rows)")
                 return history_df, False
             else:
-                print(f"DEBUG: Stored history has insufficient data points ({len(total_rows)} < 10)")
+                logger.debug(f"Stored history has insufficient data points ({len(total_rows)} < 10)")
         else:
-            print("DEBUG: Stored history has no valid equity data")
+            logger.debug("Stored history has no valid equity data")
     else:
-        print("DEBUG: No stored history available")
+        logger.debug("No stored history available")
     
     # Fall back to synthetic history from market data
-    print("DEBUG: Generating synthetic portfolio history from market data")
+    logger.info("Generating synthetic portfolio history from market data")
     synthetic_history = _build_portfolio_history_from_market(holdings_df, cash_balance, months=6)
     
     if not synthetic_history.empty:
-        print(f"DEBUG: Generated {len(synthetic_history)} synthetic data points")
+        logger.info(f"Generated {len(synthetic_history)} synthetic data points")
         return synthetic_history, True
     else:
-        print("DEBUG: Failed to generate synthetic history")
+        logger.warning("Failed to generate synthetic history")
         return pd.DataFrame(), True
 
 
+@handle_summary_errors(fallback_value=create_empty_result('risk_metrics'))
 def _compute_risk_metrics_with_source_info(
     history: Optional[pd.DataFrame], 
     is_synthetic: bool = False,
     benchmark_symbol: str = DEFAULT_BENCHMARK
 ) -> Dict[str, Any]:
     """Compute risk metrics with source information."""
-    print(f"DEBUG: Computing risk metrics (synthetic={is_synthetic})")
+    logger.debug(f"Computing risk metrics (synthetic={is_synthetic})")
     
     metrics: Dict[str, Any] = {
         "max_drawdown": None,
@@ -290,35 +287,35 @@ def _compute_risk_metrics_with_source_info(
     }
 
     if history is None or history.empty:
-        print("DEBUG: No history data for risk calculations")
+        logger.debug("No history data for risk calculations")
         return metrics
 
     df = history.copy()
     if "date" not in df.columns:
-        print("DEBUG: No date column in history data")
+        logger.debug("No date column in history data")
         return metrics
 
-    print(f"DEBUG: Processing {len(df)} history rows")
+    logger.debug(f"Processing {len(df)} history rows")
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df = df.dropna(subset=["date"])
     if df.empty:
-        print("DEBUG: No valid dates in history")
+        logger.debug("No valid dates in history")
         return metrics
     df["date"] = df["date"].dt.tz_localize(None)
 
     portfolio = df[df["ticker"] == "TOTAL"].copy()
     if portfolio.empty:
-        print("DEBUG: No TOTAL rows found in history")
+        logger.debug("No TOTAL rows found in history")
         return metrics
 
-    print(f"DEBUG: Found {len(portfolio)} TOTAL rows")
+    logger.debug(f"Found {len(portfolio)} TOTAL rows")
     portfolio["total_equity"] = pd.to_numeric(portfolio["total_equity"], errors="coerce")
     portfolio = portfolio.dropna(subset=["total_equity"])
     if portfolio.empty:
-        print("DEBUG: No valid total_equity values")
+        logger.debug("No valid total_equity values")
         return metrics
 
-    print(f"DEBUG: Processing {len(portfolio)} valid portfolio data points")
+    logger.debug(f"Processing {len(portfolio)} valid portfolio data points")
     portfolio = portfolio.sort_values("date")
     
     # Calculate drawdown
@@ -333,7 +330,7 @@ def _compute_risk_metrics_with_source_info(
         max_dd_date = portfolio.loc[min_idx, "date"]
         if pd.notna(max_dd_date):
             metrics["max_drawdown_date"] = max_dd_date.date().isoformat()
-        print(f"DEBUG: Max drawdown = {max_dd:.2f}%")
+        logger.debug(f"Max drawdown = {max_dd:.2f}%")
 
     # Calculate returns and Sharpe/Sortino
     portfolio["return"] = portfolio["total_equity"].pct_change()
@@ -341,13 +338,13 @@ def _compute_risk_metrics_with_source_info(
     if not returns.empty:
         mean_ret = float(returns.mean())
         std_ret = float(returns.std(ddof=1)) if len(returns) > 1 else 0.0
-        print(f"DEBUG: Mean return = {mean_ret:.6f}, Std dev = {std_ret:.6f}")
+        logger.debug(f"Mean return = {mean_ret:.6f}, Std dev = {std_ret:.6f}")
         
         if std_ret > 0:
             sharpe = mean_ret / std_ret
             metrics["sharpe_period"] = sharpe
             metrics["sharpe_annual"] = sharpe * math.sqrt(TRADING_DAYS_PER_YEAR)
-            print(f"DEBUG: Sharpe ratio = {sharpe:.4f} (annualized: {metrics['sharpe_annual']:.4f})")
+            logger.debug(f"Sharpe ratio = {sharpe:.4f} (annualized: {metrics['sharpe_annual']:.4f})")
 
         downside = returns[returns < 0]
         downside_std = float(downside.std(ddof=1)) if len(downside) > 1 else 0.0
@@ -355,18 +352,19 @@ def _compute_risk_metrics_with_source_info(
             sortino = mean_ret / downside_std
             metrics["sortino_period"] = sortino
             metrics["sortino_annual"] = sortino * math.sqrt(TRADING_DAYS_PER_YEAR)
-            print(f"DEBUG: Sortino ratio = {sortino:.4f} (annualized: {metrics['sortino_annual']:.4f})")
+            logger.debug(f"Sortino ratio = {sortino:.4f} (annualized: {metrics['sortino_annual']:.4f})")
 
     # Estimate period in months for benchmark history fetch
     date_span_days = max(1, (portfolio["date"].iloc[-1] - portfolio["date"].iloc[0]).days)
     months = max(1, math.ceil(date_span_days / 30))
-    print(f"DEBUG: Portfolio spans {date_span_days} days, fetching {months} months of benchmark data")
+    logger.debug(f"Portfolio spans {date_span_days} days, fetching {months} months of benchmark data")
 
     try:
-        bench_hist = MARKET_SERVICE.fetch_history(benchmark_symbol, months=max(months, 3))
-        print(f"DEBUG: Fetched benchmark history for {benchmark_symbol}")
+        # Use cached benchmark history with 5-minute TTL
+        bench_hist = get_cached_price_history(benchmark_symbol, months=max(months, 3), ttl_minutes=5)
+        logger.debug(f"Fetched benchmark history for {benchmark_symbol} (cached)")
     except Exception as e:
-        print(f"DEBUG: Failed to fetch benchmark history: {e}")
+        logger.warning(f"Failed to fetch benchmark history: {e}")
         bench_hist = pd.DataFrame()
 
     if bench_hist is not None and not bench_hist.empty:
@@ -385,7 +383,7 @@ def _compute_risk_metrics_with_source_info(
             if not closes.empty:
                 metrics["sp_first_close"] = float(closes.iloc[0])
                 metrics["sp_last_close"] = float(closes.iloc[-1])
-                print(f"DEBUG: Benchmark range: {metrics['sp_first_close']:.2f} - {metrics['sp_last_close']:.2f}")
+                logger.debug(f"Benchmark range: {metrics['sp_first_close']:.2f} - {metrics['sp_last_close']:.2f}")
 
         bench["bench_return"] = bench["close"].pct_change()
         merged = pd.merge(
@@ -397,7 +395,7 @@ def _compute_risk_metrics_with_source_info(
 
         obs = len(merged)
         metrics["obs"] = obs
-        print(f"DEBUG: Merged {obs} observations for beta/alpha calculations")
+        logger.debug(f"Merged {obs} observations for beta/alpha calculations")
 
         if obs >= 2:
             bench_returns = merged["bench_return"].to_numpy()
@@ -409,14 +407,14 @@ def _compute_risk_metrics_with_source_info(
                 metrics["beta"] = beta
                 alpha_daily = float(port_returns.mean() - beta * bench_returns.mean())
                 metrics["alpha_annual"] = ((1 + alpha_daily) ** TRADING_DAYS_PER_YEAR) - 1
-                print(f"DEBUG: Beta = {beta:.4f}, Alpha (annual) = {metrics['alpha_annual']:.4f}")
+                logger.debug(f"Beta = {beta:.4f}, Alpha (annual) = {metrics['alpha_annual']:.4f}")
 
             corr_matrix = np.corrcoef(bench_returns, port_returns)
             if corr_matrix.shape == (2, 2):
                 r_value = corr_matrix[0, 1]
                 if not np.isnan(r_value):
                     metrics["r_squared"] = float(r_value**2)
-                    print(f"DEBUG: R² = {metrics['r_squared']:.4f}")
+                    logger.debug(f"R² = {metrics['r_squared']:.4f}")
 
     # Add appropriate notes
     if is_synthetic:
@@ -428,10 +426,11 @@ def _compute_risk_metrics_with_source_info(
     elif metrics["note"] is None and metrics["obs"]:
         metrics["note"] = f"Metrics based on {metrics['obs']} observations."
 
-    print(f"DEBUG: Risk metrics calculation complete. Note: {metrics['note']}")
+    logger.info(f"Risk metrics calculation complete. Note: {metrics['note']}")
     return metrics
 
 
+@handle_summary_errors(fallback_value=["[ Price & Volume ]", "(error occurred)"])
 def _format_price_volume_section(price_rows: List[Dict[str, Any]]) -> List[str]:
     """Format the Price & Volume section of the report."""
     lines = []
@@ -452,6 +451,7 @@ def _format_price_volume_section(price_rows: List[Dict[str, Any]]) -> List[str]:
     return lines
 
 
+@handle_summary_errors(fallback_value=["[ Risk & Return ]", "(error occurred)"])
 def _format_risk_metrics_section(risk_metrics: Dict[str, Any]) -> List[str]:
     """Format the Risk & Return and CAPM sections of the report."""
     lines = []
@@ -488,6 +488,7 @@ def _format_risk_metrics_section(risk_metrics: Dict[str, Any]) -> List[str]:
     return lines
 
 
+@handle_summary_errors(fallback_value=["[ Your Instructions ]", "(error occurred)"])
 def _format_instructions_section() -> List[str]:
     """Format the final instructions section of the report."""
     lines = []
@@ -499,6 +500,7 @@ def _format_instructions_section() -> List[str]:
     return lines
 
 
+@handle_summary_errors(fallback_value=["[ Snapshot ]", "(error occurred)"])
 def _format_snapshot_section(total_equity: float, cash_balance: float) -> List[str]:
     """Format the Snapshot section of the report."""
     lines = []
@@ -508,12 +510,13 @@ def _format_snapshot_section(total_equity: float, cash_balance: float) -> List[s
     return lines
 
 
+@handle_summary_errors(fallback_value=create_empty_result('portfolio_metrics'))
 def _calculate_portfolio_metrics(holdings_df: pd.DataFrame, summary_df: Optional[pd.DataFrame], 
                                 history_df: Optional[pd.DataFrame], cash_balance: float, 
                                 benchmark_symbol: str) -> Dict[str, Any]:
     """Calculate portfolio risk metrics and snapshot values."""
     # Risk metrics and benchmark comparison using hybrid approach
-    print("DEBUG: Starting risk metrics calculation with hybrid approach")
+    logger.info("Starting risk metrics calculation with hybrid approach")
     risk_history, is_synthetic = get_portfolio_history_for_analytics(holdings_df, history_df, cash_balance)
     risk_metrics = _compute_risk_metrics_with_source_info(risk_history, is_synthetic=is_synthetic, benchmark_symbol=benchmark_symbol)
 
@@ -542,6 +545,7 @@ def _calculate_portfolio_metrics(holdings_df: pd.DataFrame, summary_df: Optional
     }
 
 
+@handle_data_errors(fallback_value=[], log_level="debug")
 def _collect_portfolio_symbols(holdings_df: pd.DataFrame, index_symbols: List[str]) -> List[str]:
     """Collect all symbols needed for price/volume data."""
     symbols_to_fetch: List[str] = []
@@ -557,6 +561,7 @@ def _collect_portfolio_symbols(holdings_df: pd.DataFrame, index_symbols: List[st
     return symbols_to_fetch
 
 
+@handle_summary_errors(fallback_value=create_empty_result('summary_data'))
 def _prepare_summary_data(data: Dict[str, Any]) -> Dict[str, Any]:
     """Extract and validate input data for daily summary generation."""
     as_of_raw = data.get("asOfDate") or datetime.utcnow().strftime("%Y-%m-%d")
@@ -599,6 +604,13 @@ def render_daily_portfolio_summary(data: Dict[str, Any]) -> str:
     """Render the Daily Portfolio Summary using the standardized report template."""
 
     try:
+        # Validate required input data
+        if not validate_input_data(data, required_fields=["asOfDate"]):
+            logger.warning("Missing required input data, using defaults")
+        
+        # Warm cache for common symbols to improve performance
+        warm_cache_for_symbols(COMMON_SYMBOLS, ttl_minutes=5)
+        
         # Prepare and validate input data
         parsed_data = _prepare_summary_data(data)
         as_of_display = parsed_data["as_of_display"]

@@ -17,6 +17,7 @@ from ui.cash import show_cash_section
 from ui.forms import show_buy_form, show_sell_form
 from ui.manual_pricing import show_manual_pricing_section, show_api_status_warning
 from ui.summary import render_daily_portfolio_summary
+from utils.cache import get_cache_stats, clear_cache
 
 
 def fmt_currency(val: float) -> str:
@@ -321,6 +322,22 @@ def render_dashboard() -> None:
             else:
                 caption_txt += "Synthetic (Development)" if use_micro else "Disabled (fallback only)"
             st.caption(caption_txt)
+
+            # Cache statistics
+            try:
+                cache_stats = get_cache_stats()
+                price_hit_rate = cache_stats["price_cache"]["hit_rate"]
+                history_hit_rate = cache_stats["history_cache"]["hit_rate"]
+                st.caption(f"Cache Hit Rate: Price {price_hit_rate:.1%} | History {history_hit_rate:.1%}")
+                
+                # Cache clear button (in expander to save space)
+                with st.expander("Cache Controls", expanded=False):
+                    if st.button("Clear Cache", help="Clear all cached market data"):
+                        clear_cache()
+                        st.success("Cache cleared successfully")
+                        st.rerun()
+            except Exception:
+                pass  # Silently ignore cache stats errors
 
         port_table = summary_df[summary_df["Ticker"] != "TOTAL"].copy()
         # Drop legacy cash/equity columns from per-position display
