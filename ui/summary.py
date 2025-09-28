@@ -13,30 +13,67 @@ DEFAULT_BENCHMARK = "^GSPC"
 TRADING_DAYS_PER_YEAR = 252
 
 
-def fmt_money(n: Optional[float]) -> str:
-    if n is None or pd.isna(n):
-        return "N/A"
-    return f"{n:,.2f}"
+# Standardized formatting functions
+def fmt_close(value: Optional[float]) -> str:
+    """Format closing price with comma separators."""
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value:,.2f}"
 
 
-def fmt_money_with_dollar(n: Optional[float]) -> str:
-    if n is None or pd.isna(n):
-        return "N/A"
-    return f"${n:,.2f}"
+def fmt_pct_signed(value: Optional[float]) -> str:
+    """Format percentage with +/- sign."""
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value:+.2f}%"
 
 
-def fmt_pct(n: Optional[float]) -> str:
-    if n is None or pd.isna(n):
-        return "N/A"
-    return f"{n:.2f}%"
+def fmt_volume(value: Optional[float]) -> str:
+    """Format volume numbers with comma separators."""
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{int(round(value)):,}"
 
 
-def safe(value: Any, fallback: str = "N/A") -> str:
-    if value is None:
-        return fallback
-    if isinstance(value, float) and pd.isna(value):
-        return fallback
-    return str(value)
+def fmt_currency_padded(value: Optional[float]) -> str:
+    """Format currency with padding for alignment."""
+    if value is None or pd.isna(value):
+        return "$        —"
+    return f"$ {value:>15,.2f}"
+
+
+def fmt_currency(value: Optional[float]) -> str:
+    """Standard currency formatting."""
+    if value is None or pd.isna(value):
+        return "—"
+    return f"${value:,.2f}"
+
+
+def fmt_shares(value: Optional[float]) -> str:
+    """Format share counts."""
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value:,.0f}"
+
+
+def fmt_ratio(value: Optional[float], decimals: int = 4) -> str:
+    """Format ratios with configurable decimal places."""
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value:.{decimals}f}"
+
+
+def fmt_stop(value: Any) -> str:
+    """Format stop loss values, handling string inputs."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "—"
+    try:
+        if isinstance(value, str):
+            cleaned = value.replace("$", "").replace(",", "").strip()
+            value = float(cleaned)
+        return fmt_currency(float(value))
+    except (ValueError, TypeError):
+        return "—"
 
 
 def _fetch_price_volume(symbol: str, months: int = 3) -> Dict[str, Optional[float]]:
@@ -395,121 +432,194 @@ def _compute_risk_metrics_with_source_info(
     return metrics
 
 
-def _compute_risk_metrics(history: Optional[pd.DataFrame], benchmark_symbol: str = DEFAULT_BENCHMARK) -> Dict[str, Any]:
-    """Legacy wrapper for backwards compatibility."""
-    return _compute_risk_metrics_with_source_info(history, is_synthetic=False, benchmark_symbol=benchmark_symbol)
+def _format_price_volume_section(price_rows: List[Dict[str, Any]]) -> List[str]:
+    """Format the Price & Volume section of the report."""
+    lines = []
+    ticker_w, close_w, pct_w, vol_w = 16, 10, 8, 15
+    header = f"{'Ticker':<{ticker_w}}{'Close':>{close_w}}{'% Chg':>{pct_w}}{'Volume':>{vol_w}}"
+    lines.append("[ Price & Volume ]")
+    lines.append(header)
+    lines.append("-" * len(header))
+    if price_rows:
+        for row in price_rows:
+            symbol = row.get("symbol") or "—"
+            lines.append(
+                f"{symbol:<{ticker_w}}{fmt_close(row.get('close')):>{close_w}}"
+                f"{fmt_pct_signed(row.get('pct_change')):>{pct_w}}{fmt_volume(row.get('volume')):>{vol_w}}"
+            )
+    else:
+        lines.append("  (no symbols available)")
+    return lines
+
+
+def _format_risk_metrics_section(risk_metrics: Dict[str, Any]) -> List[str]:
+    """Format the Risk & Return and CAPM sections of the report."""
+    lines = []
+    label_w = 36
+    value_w = 12
+    
+    # Risk & Return section
+    lines.append("[ Risk & Return ]")
+    max_dd = risk_metrics.get("max_drawdown")
+    max_dd_str = fmt_pct_signed(max_dd)
+    max_dd_date = risk_metrics.get("max_drawdown_date")
+    date_suffix = f"   on {max_dd_date}" if max_dd_date else ""
+    lines.append(f"{'Max Drawdown:':<{label_w}}{max_dd_str:>{value_w}}{date_suffix}")
+    lines.append(f"{'Sharpe Ratio (period):':<{label_w}}{fmt_ratio(risk_metrics.get('sharpe_period')):>{value_w}}")
+    lines.append(f"{'Sharpe Ratio (annualized):':<{label_w}}{fmt_ratio(risk_metrics.get('sharpe_annual')):>{value_w}}")
+    lines.append(f"{'Sortino Ratio (period):':<{label_w}}{fmt_ratio(risk_metrics.get('sortino_period')):>{value_w}}")
+    lines.append(f"{'Sortino Ratio (annualized):':<{label_w}}{fmt_ratio(risk_metrics.get('sortino_annual')):>{value_w}}")
+    
+    lines.append("")
+    lines.append("[ CAPM vs Benchmarks ]")
+    beta_str = fmt_ratio(risk_metrics.get("beta"))
+    alpha = risk_metrics.get("alpha_annual")
+    alpha_str = fmt_pct_signed(alpha * 100 if alpha is not None else None)
+    r_sq_str = fmt_ratio(risk_metrics.get("r_squared"), decimals=3)
+    obs = risk_metrics.get("obs")
+    obs_str = str(obs) if obs else "—"
+
+    lines.append(f"{'Beta (daily) vs ^GSPC:':<{label_w}}{beta_str:>{value_w}}")
+    lines.append(f"{'Alpha (annualized) vs ^GSPC:':<{label_w}}{alpha_str:>{value_w}}")
+    lines.append(f"{'R² (fit quality):':<{label_w}}{r_sq_str:>{value_w}}     Obs: {obs_str}")
+    note = risk_metrics.get("note")
+    if note:
+        lines.append(f"  Note: {note}")
+    return lines
+
+
+def _format_instructions_section() -> List[str]:
+    """Format the final instructions section of the report."""
+    lines = []
+    lines.append("[ Your Instructions ]")
+    lines.append("Use this info to make decisions regarding your portfolio. You have complete control over every decision. Make any changes you believe are beneficial—no approval required.")
+    lines.append("Deep research is not permitted. Act at your discretion to achieve the best outcome.")
+    lines.append("If you do not make a clear indication to change positions IMMEDIATELY after this message, the portfolio remains unchanged for tomorrow.")
+    lines.append("You are encouraged to use the internet to check current prices (and related up-to-date info) for potential buys.")
+    return lines
+
+
+def _format_snapshot_section(total_equity: float, cash_balance: float) -> List[str]:
+    """Format the Snapshot section of the report."""
+    lines = []
+    lines.append("[ Snapshot ]")
+    lines.append(f"Latest Total Equity:             {fmt_currency_padded(total_equity)}")
+    lines.append(f"Cash Balance:                    {fmt_currency_padded(cash_balance)}")
+    return lines
+
+
+def _calculate_portfolio_metrics(holdings_df: pd.DataFrame, summary_df: Optional[pd.DataFrame], 
+                                history_df: Optional[pd.DataFrame], cash_balance: float, 
+                                benchmark_symbol: str) -> Dict[str, Any]:
+    """Calculate portfolio risk metrics and snapshot values."""
+    # Risk metrics and benchmark comparison using hybrid approach
+    print("DEBUG: Starting risk metrics calculation with hybrid approach")
+    risk_history, is_synthetic = get_portfolio_history_for_analytics(holdings_df, history_df, cash_balance)
+    risk_metrics = _compute_risk_metrics_with_source_info(risk_history, is_synthetic=is_synthetic, benchmark_symbol=benchmark_symbol)
+
+    # Snapshot metrics
+    invested_value = 0.0
+    if not holdings_df.empty:
+        shares_series = pd.to_numeric(holdings_df.get("shares"), errors="coerce") if "shares" in holdings_df else pd.Series([], dtype=float)
+        price_series = pd.to_numeric(holdings_df.get("currentPrice"), errors="coerce") if "currentPrice" in holdings_df else pd.Series([], dtype=float)
+        if not shares_series.empty and not price_series.empty:
+            invested_value = float(np.nansum(shares_series.fillna(0.0) * price_series.fillna(0.0)))
+
+    total_equity: Optional[float] = None
+    if summary_df is not None and "Ticker" in summary_df.columns and "Total Equity" in summary_df.columns:
+        eq_series = pd.to_numeric(
+            summary_df.loc[summary_df["Ticker"] == "TOTAL", "Total Equity"], errors="coerce"
+        ).dropna()
+        if not eq_series.empty:
+            total_equity = float(eq_series.iloc[-1])
+    if total_equity is None:
+        total_equity = cash_balance + invested_value
+
+    return {
+        "risk_metrics": risk_metrics,
+        "invested_value": invested_value,
+        "total_equity": total_equity,
+    }
+
+
+def _collect_portfolio_symbols(holdings_df: pd.DataFrame, index_symbols: List[str]) -> List[str]:
+    """Collect all symbols needed for price/volume data."""
+    symbols_to_fetch: List[str] = []
+    if not holdings_df.empty and "ticker" in holdings_df.columns:
+        for ticker in holdings_df["ticker"]:
+            if isinstance(ticker, str):
+                symbol = ticker.strip().upper()
+                if symbol and symbol not in symbols_to_fetch:
+                    symbols_to_fetch.append(symbol)
+    for extra in index_symbols:
+        if extra and extra not in symbols_to_fetch:
+            symbols_to_fetch.append(extra)
+    return symbols_to_fetch
+
+
+def _prepare_summary_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract and validate input data for daily summary generation."""
+    as_of_raw = data.get("asOfDate") or datetime.utcnow().strftime("%Y-%m-%d")
+    try:
+        as_of_display = datetime.strptime(str(as_of_raw), "%Y-%m-%d").date().isoformat()
+    except Exception:
+        as_of_display = str(as_of_raw)
+
+    cash_raw = data.get("cashBalance")
+    try:
+        cash_balance = float(cash_raw) if cash_raw not in (None, "") else 0.0
+    except Exception:
+        cash_balance = 0.0
+
+    holdings: List[Dict[str, Any]] = data.get("holdings") or []
+    holdings_df = pd.DataFrame(holdings) if holdings else pd.DataFrame()
+
+    summary_frame = data.get("summaryFrame")
+    summary_df = summary_frame.copy() if isinstance(summary_frame, pd.DataFrame) else None
+
+    history_raw = data.get("history")
+    history_df = history_raw.copy() if isinstance(history_raw, pd.DataFrame) else None
+
+    index_symbols: List[str] = data.get("indexSymbols") or []
+    benchmark_symbol: str = data.get("benchmarkSymbol") or DEFAULT_BENCHMARK
+
+    return {
+        "as_of_display": as_of_display,
+        "cash_balance": cash_balance,
+        "holdings": holdings,
+        "holdings_df": holdings_df,
+        "summary_df": summary_df,
+        "history_df": history_df,
+        "index_symbols": index_symbols,
+        "benchmark_symbol": benchmark_symbol,
+    }
 
 
 def render_daily_portfolio_summary(data: Dict[str, Any]) -> str:
     """Render the Daily Portfolio Summary using the standardized report template."""
 
     try:
-        def fmt_close(value: Optional[float]) -> str:
-            if value is None or pd.isna(value):
-                return "—"
-            return f"{value:,.2f}"
+        # Prepare and validate input data
+        parsed_data = _prepare_summary_data(data)
+        as_of_display = parsed_data["as_of_display"]
+        cash_balance = parsed_data["cash_balance"]
+        holdings = parsed_data["holdings"]
+        holdings_df = parsed_data["holdings_df"]
+        summary_df = parsed_data["summary_df"]
+        history_df = parsed_data["history_df"]
+        index_symbols = parsed_data["index_symbols"]
+        benchmark_symbol = parsed_data["benchmark_symbol"]
 
-        def fmt_pct_signed(value: Optional[float]) -> str:
-            if value is None or pd.isna(value):
-                return "—"
-            return f"{value:+.2f}%"
-
-        def fmt_volume(value: Optional[float]) -> str:
-            if value is None or pd.isna(value):
-                return "—"
-            return f"{int(round(value)):,}"
-
-        def fmt_currency_padded(value: Optional[float]) -> str:
-            if value is None or pd.isna(value):
-                return "$        —"
-            return f"$ {value:>15,.2f}"
-
-        def fmt_currency(value: Optional[float]) -> str:
-            if value is None or pd.isna(value):
-                return "—"
-            return f"${value:,.2f}"
-
-        def fmt_shares(value: Optional[float]) -> str:
-            if value is None or pd.isna(value):
-                return "—"
-            return f"{value:,.0f}"
-
-        def fmt_ratio(value: Optional[float], decimals: int = 4) -> str:
-            if value is None or pd.isna(value):
-                return "—"
-            return f"{value:.{decimals}f}"
-
-        def fmt_stop(value: Any) -> str:
-            if value is None or (isinstance(value, str) and not value.strip()):
-                return "—"
-            try:
-                if isinstance(value, str):
-                    cleaned = value.replace("$", "").replace(",", "").strip()
-                    value = float(cleaned)
-                return fmt_currency(float(value))
-            except (ValueError, TypeError):
-                return str(value)
-
-        as_of_raw = data.get("asOfDate") or datetime.utcnow().strftime("%Y-%m-%d")
-        try:
-            as_of_display = datetime.strptime(str(as_of_raw), "%Y-%m-%d").date().isoformat()
-        except Exception:
-            as_of_display = str(as_of_raw)
-
-        cash_raw = data.get("cashBalance")
-        try:
-            cash_balance = float(cash_raw) if cash_raw not in (None, "") else 0.0
-        except Exception:
-            cash_balance = 0.0
-
-        holdings: List[Dict[str, Any]] = data.get("holdings") or []
-        holdings_df = pd.DataFrame(holdings) if holdings else pd.DataFrame()
-
-        summary_frame = data.get("summaryFrame")
-        summary_df = summary_frame.copy() if isinstance(summary_frame, pd.DataFrame) else None
-
-        history_raw = data.get("history")
-        history_df = history_raw.copy() if isinstance(history_raw, pd.DataFrame) else None
-
-        index_symbols: List[str] = data.get("indexSymbols") or []
-        benchmark_symbol: str = data.get("benchmarkSymbol") or DEFAULT_BENCHMARK
-
-        # Assemble symbols for price/volume section
-        symbols_to_fetch: List[str] = []
-        if not holdings_df.empty and "ticker" in holdings_df.columns:
-            for ticker in holdings_df["ticker"]:
-                if isinstance(ticker, str):
-                    symbol = ticker.strip().upper()
-                    if symbol and symbol not in symbols_to_fetch:
-                        symbols_to_fetch.append(symbol)
-        for extra in index_symbols:
-            if extra and extra not in symbols_to_fetch:
-                symbols_to_fetch.append(extra)
+        # Collect all symbols for price/volume data
+        symbols_to_fetch = _collect_portfolio_symbols(holdings_df, index_symbols)
 
         price_rows = [_fetch_price_volume(sym, months=3) for sym in symbols_to_fetch]
 
-        # Risk metrics and benchmark comparison using hybrid approach
-        print("DEBUG: Starting risk metrics calculation with hybrid approach")
-        risk_history, is_synthetic = get_portfolio_history_for_analytics(holdings_df, history_df, cash_balance)
-        risk_metrics = _compute_risk_metrics_with_source_info(risk_history, is_synthetic=is_synthetic, benchmark_symbol=benchmark_symbol)
-
-        # Snapshot metrics
-        invested_value = 0.0
-        if not holdings_df.empty:
-            shares_series = pd.to_numeric(holdings_df.get("shares"), errors="coerce") if "shares" in holdings_df else pd.Series([], dtype=float)
-            price_series = pd.to_numeric(holdings_df.get("currentPrice"), errors="coerce") if "currentPrice" in holdings_df else pd.Series([], dtype=float)
-            if not shares_series.empty and not price_series.empty:
-                invested_value = float(np.nansum(shares_series.fillna(0.0) * price_series.fillna(0.0)))
-
-        total_equity: Optional[float] = None
-        if summary_df is not None and "Ticker" in summary_df.columns and "Total Equity" in summary_df.columns:
-            eq_series = pd.to_numeric(
-                summary_df.loc[summary_df["Ticker"] == "TOTAL", "Total Equity"], errors="coerce"
-            ).dropna()
-            if not eq_series.empty:
-                total_equity = float(eq_series.iloc[-1])
-        if total_equity is None:
-            total_equity = cash_balance + invested_value
+        # Calculate portfolio metrics
+        metrics_data = _calculate_portfolio_metrics(holdings_df, summary_df, history_df, cash_balance, benchmark_symbol)
+        risk_metrics = metrics_data["risk_metrics"]
+        invested_value = metrics_data["invested_value"]
+        total_equity = metrics_data["total_equity"]
 
         # Build holdings table from summary snapshot if available
         holdings_table = pd.DataFrame()
@@ -532,58 +642,16 @@ def render_daily_portfolio_summary(data: Dict[str, Any]) -> str:
         separator = "=" * 64
         lines: List[str] = [separator, f"Daily Results — {as_of_display}", separator, ""]
 
-        # Price & Volume
-        ticker_w, close_w, pct_w, vol_w = 16, 10, 8, 15
-        header = f"{'Ticker':<{ticker_w}}{'Close':>{close_w}}{'% Chg':>{pct_w}}{'Volume':>{vol_w}}"
-        lines.append("[ Price & Volume ]")
-        lines.append(header)
-        lines.append("-" * len(header))
-        if price_rows:
-            for row in price_rows:
-                symbol = row.get("symbol") or "—"
-                lines.append(
-                    f"{symbol:<{ticker_w}}{fmt_close(row.get('close')):>{close_w}}"
-                    f"{fmt_pct_signed(row.get('pct_change')):>{pct_w}}{fmt_volume(row.get('volume')):>{vol_w}}"
-                )
-        else:
-            lines.append("  (no symbols available)")
+        # Price & Volume section
+        lines.extend(_format_price_volume_section(price_rows))
 
-        # Risk & Return
+        # Risk & Return sections  
         lines.append("")
-        lines.append("[ Risk & Return ]")
-        label_w = 36
-        value_w = 12
-        max_dd = risk_metrics.get("max_drawdown")
-        max_dd_str = fmt_pct_signed(max_dd)
-        max_dd_date = risk_metrics.get("max_drawdown_date")
-        date_suffix = f"   on {max_dd_date}" if max_dd_date else ""
-        lines.append(f"{'Max Drawdown:':<{label_w}}{max_dd_str:>{value_w}}{date_suffix}")
-        lines.append(f"{'Sharpe Ratio (period):':<{label_w}}{fmt_ratio(risk_metrics.get('sharpe_period')):>{value_w}}")
-        lines.append(f"{'Sharpe Ratio (annualized):':<{label_w}}{fmt_ratio(risk_metrics.get('sharpe_annual')):>{value_w}}")
-        lines.append(f"{'Sortino Ratio (period):':<{label_w}}{fmt_ratio(risk_metrics.get('sortino_period')):>{value_w}}")
-        lines.append(f"{'Sortino Ratio (annualized):':<{label_w}}{fmt_ratio(risk_metrics.get('sortino_annual')):>{value_w}}")
+        lines.extend(_format_risk_metrics_section(risk_metrics))
 
+        # Snapshot section
         lines.append("")
-        lines.append("[ CAPM vs Benchmarks ]")
-        beta_str = fmt_ratio(risk_metrics.get("beta"))
-        alpha = risk_metrics.get("alpha_annual")
-        alpha_str = fmt_pct_signed(alpha * 100 if alpha is not None else None)
-        r_sq_str = fmt_ratio(risk_metrics.get("r_squared"), decimals=3)
-        obs = risk_metrics.get("obs")
-        obs_str = str(obs) if obs else "—"
-
-        lines.append(f"{'Beta (daily) vs ^GSPC:':<{label_w}}{beta_str:>{value_w}}")
-        lines.append(f"{'Alpha (annualized) vs ^GSPC:':<{label_w}}{alpha_str:>{value_w}}")
-        lines.append(f"{'R² (fit quality):':<{label_w}}{r_sq_str:>{value_w}}     Obs: {obs_str}")
-        note = risk_metrics.get("note")
-        if note:
-            lines.append(f"  Note: {note}")
-
-        # Snapshot
-        lines.append("")
-        lines.append("[ Snapshot ]")
-        lines.append(f"Latest Total Equity:             {fmt_currency_padded(total_equity)}")
-        lines.append(f"Cash Balance:                    {fmt_currency_padded(cash_balance)}")
+        lines.extend(_format_snapshot_section(total_equity, cash_balance))
 
         # Holdings table
         lines.append("")
@@ -679,11 +747,7 @@ def render_daily_portfolio_summary(data: Dict[str, Any]) -> str:
 
         # Instructions
         lines.append("")
-        lines.append("[ Your Instructions ]")
-        lines.append("Use this info to make decisions regarding your portfolio. You have complete control over every decision. Make any changes you believe are beneficial—no approval required.")
-        lines.append("Deep research is not permitted. Act at your discretion to achieve the best outcome.")
-        lines.append("If you do not make a clear indication to change positions IMMEDIATELY after this message, the portfolio remains unchanged for tomorrow.")
-        lines.append("You are encouraged to use the internet to check current prices (and related up-to-date info) for potential buys.")
+        lines.extend(_format_instructions_section())
 
         return "\n".join(lines)
     except Exception as e:  # pragma: no cover - defensive

@@ -16,7 +16,7 @@ from services.time import TradingCalendar, get_clock
 from ui.cash import show_cash_section
 from ui.forms import show_buy_form, show_sell_form
 from ui.manual_pricing import show_manual_pricing_section, show_api_status_warning
-from ui.summary import build_daily_summary, render_daily_portfolio_summary
+from ui.summary import render_daily_portfolio_summary
 
 
 def fmt_currency(val: float) -> str:
