@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from config.summary_config import get_config, set_config, SummaryConfig
 from services.core.market_service import MarketService
 from utils.cache import get_cached_price_data, get_cached_price_history, warm_cache_for_symbols, COMMON_SYMBOLS
 from utils.error_handling import (
@@ -21,8 +22,6 @@ from utils.error_handling import (
 logger = logging.getLogger(__name__)
 
 MARKET_SERVICE = MarketService()
-DEFAULT_BENCHMARK = "^GSPC"
-TRADING_DAYS_PER_YEAR = 252
 
 
 # Standardized formatting functions
@@ -30,14 +29,16 @@ def fmt_close(value: Optional[float]) -> str:
     """Format closing price with comma separators."""
     if value is None or pd.isna(value):
         return "—"
-    return f"{value:,.2f}"
+    precision = get_config().currency_precision
+    return f"{value:,.{precision}f}"
 
 
 def fmt_pct_signed(value: Optional[float]) -> str:
     """Format percentage with +/- sign."""
     if value is None or pd.isna(value):
         return "—"
-    return f"{value:+.2f}%"
+    precision = get_config().percentage_precision
+    return f"{value:+.{precision}f}%"
 
 
 def fmt_volume(value: Optional[float]) -> str:
@@ -51,14 +52,16 @@ def fmt_currency_padded(value: Optional[float]) -> str:
     """Format currency with padding for alignment."""
     if value is None or pd.isna(value):
         return "$        —"
-    return f"$ {value:>15,.2f}"
+    precision = get_config().currency_precision
+    return f"$ {value:>15,.{precision}f}"
 
 
 def fmt_currency(value: Optional[float]) -> str:
     """Standard currency formatting."""
     if value is None or pd.isna(value):
         return "—"
-    return f"${value:,.2f}"
+    precision = get_config().currency_precision
+    return f"${value:,.{precision}f}"
 
 
 def fmt_shares(value: Optional[float]) -> str:
@@ -89,7 +92,7 @@ def fmt_stop(value: Any) -> str:
 
 
 @handle_summary_errors(fallback_value=create_empty_result('price_data'))
-def _fetch_price_volume(symbol: str, months: int = 3) -> Dict[str, Optional[float]]:
+def _fetch_price_volume(symbol: str, months: int = None) -> Dict[str, Optional[float]]:
     """
     Fetch current price and volume data for a symbol using cache.
     
@@ -103,8 +106,9 @@ def _fetch_price_volume(symbol: str, months: int = 3) -> Dict[str, Optional[floa
     if not symbol or not symbol.strip():
         return {"symbol": symbol, "close": None, "pct_change": None, "volume": None}
     
-    # Use cached price data with 5-minute TTL
-    return get_cached_price_data(symbol.strip().upper(), ttl_minutes=5)
+    # Use cached price data with configured TTL
+    config = get_config()
+    return get_cached_price_data(symbol.strip().upper(), ttl_minutes=config.price_cache_ttl_minutes)
 
 
 @handle_data_errors(fallback_value=False, log_level="debug")
@@ -131,13 +135,17 @@ def _history_has_valid_equity(history: Optional[pd.DataFrame]) -> bool:
 
 @handle_data_errors(fallback_value=pd.DataFrame(), log_level="warning")
 def _build_portfolio_history_from_market(
-    holdings_df: pd.DataFrame, cash_balance: float, months: int = 6
+    holdings_df: pd.DataFrame, cash_balance: float, months: int = None
 ) -> pd.DataFrame:
     """Build synthetic portfolio history using current positions and market data.
     
     This creates a backfilled history showing what the portfolio value would have been
     if the current positions were held at historical prices.
     """
+    config = get_config()
+    if months is None:
+        months = config.default_history_months
+        
     logger.debug(f"Building portfolio history from market data (months={months})")
     
     if holdings_df is None or holdings_df.empty:
@@ -159,8 +167,8 @@ def _build_portfolio_history_from_market(
         logger.debug(f"Fetching history for {ticker} ({shares} shares)")
         
         try:
-            # Use cached price history with 5-minute TTL
-            hist = get_cached_price_history(ticker, months=months, ttl_minutes=5)
+            # Use cached price history with configured TTL
+            hist = get_cached_price_history(ticker, months=months, ttl_minutes=config.price_cache_ttl_minutes)
             if hist is None or hist.empty:
                 logger.debug(f"No market history returned for {ticker}")
                 failed_tickers.append(ticker)
@@ -238,11 +246,12 @@ def get_portfolio_history_for_analytics(
     if history_df is not None and not history_df.empty:
         if _history_has_valid_equity(history_df):
             total_rows = history_df[history_df.get("ticker", history_df.get("Ticker", "")) == "TOTAL"]
-            if len(total_rows) >= 10:  # Need at least 10 data points
+            min_obs = get_config().min_observations_for_metrics
+            if len(total_rows) >= min_obs:
                 logger.info(f"Using actual stored history ({len(total_rows)} TOTAL rows)")
                 return history_df, False
             else:
-                logger.debug(f"Stored history has insufficient data points ({len(total_rows)} < 10)")
+                logger.debug(f"Stored history has insufficient data points ({len(total_rows)} < {min_obs})")
         else:
             logger.debug("Stored history has no valid equity data")
     else:
@@ -250,7 +259,7 @@ def get_portfolio_history_for_analytics(
     
     # Fall back to synthetic history from market data
     logger.info("Generating synthetic portfolio history from market data")
-    synthetic_history = _build_portfolio_history_from_market(holdings_df, cash_balance, months=6)
+    synthetic_history = _build_portfolio_history_from_market(holdings_df, cash_balance)
     
     if not synthetic_history.empty:
         logger.info(f"Generated {len(synthetic_history)} synthetic data points")
@@ -264,7 +273,7 @@ def get_portfolio_history_for_analytics(
 def _compute_risk_metrics_with_source_info(
     history: Optional[pd.DataFrame], 
     is_synthetic: bool = False,
-    benchmark_symbol: str = DEFAULT_BENCHMARK
+    benchmark_symbol: str = get_config().benchmark_symbol
 ) -> Dict[str, Any]:
     """Compute risk metrics with source information."""
     logger.debug(f"Computing risk metrics (synthetic={is_synthetic})")
@@ -343,7 +352,7 @@ def _compute_risk_metrics_with_source_info(
         if std_ret > 0:
             sharpe = mean_ret / std_ret
             metrics["sharpe_period"] = sharpe
-            metrics["sharpe_annual"] = sharpe * math.sqrt(TRADING_DAYS_PER_YEAR)
+            metrics["sharpe_annual"] = sharpe * math.sqrt(get_config().trading_days_per_year)
             logger.debug(f"Sharpe ratio = {sharpe:.4f} (annualized: {metrics['sharpe_annual']:.4f})")
 
         downside = returns[returns < 0]
@@ -351,7 +360,7 @@ def _compute_risk_metrics_with_source_info(
         if downside_std > 0:
             sortino = mean_ret / downside_std
             metrics["sortino_period"] = sortino
-            metrics["sortino_annual"] = sortino * math.sqrt(TRADING_DAYS_PER_YEAR)
+            metrics["sortino_annual"] = sortino * math.sqrt(get_config().trading_days_per_year)
             logger.debug(f"Sortino ratio = {sortino:.4f} (annualized: {metrics['sortino_annual']:.4f})")
 
     # Estimate period in months for benchmark history fetch
@@ -360,8 +369,10 @@ def _compute_risk_metrics_with_source_info(
     logger.debug(f"Portfolio spans {date_span_days} days, fetching {months} months of benchmark data")
 
     try:
-        # Use cached benchmark history with 5-minute TTL
-        bench_hist = get_cached_price_history(benchmark_symbol, months=max(months, 3), ttl_minutes=5)
+        # Use cached benchmark history with configured TTL
+        config = get_config()
+        min_months = max(months, config.default_history_months // 2)  # At least half default period
+        bench_hist = get_cached_price_history(benchmark_symbol, months=min_months, ttl_minutes=config.price_cache_ttl_minutes)
         logger.debug(f"Fetched benchmark history for {benchmark_symbol} (cached)")
     except Exception as e:
         logger.warning(f"Failed to fetch benchmark history: {e}")
@@ -406,7 +417,7 @@ def _compute_risk_metrics_with_source_info(
                 beta = cov / bench_var
                 metrics["beta"] = beta
                 alpha_daily = float(port_returns.mean() - beta * bench_returns.mean())
-                metrics["alpha_annual"] = ((1 + alpha_daily) ** TRADING_DAYS_PER_YEAR) - 1
+                metrics["alpha_annual"] = ((1 + alpha_daily) ** get_config().trading_days_per_year) - 1
                 logger.debug(f"Beta = {beta:.4f}, Alpha (annual) = {metrics['alpha_annual']:.4f}")
 
             corr_matrix = np.corrcoef(bench_returns, port_returns)
@@ -479,8 +490,9 @@ def _format_risk_metrics_section(risk_metrics: Dict[str, Any]) -> List[str]:
     obs = risk_metrics.get("obs")
     obs_str = str(obs) if obs else "—"
 
-    lines.append(f"{'Beta (daily) vs ^GSPC:':<{label_w}}{beta_str:>{value_w}}")
-    lines.append(f"{'Alpha (annualized) vs ^GSPC:':<{label_w}}{alpha_str:>{value_w}}")
+    benchmark = get_config().benchmark_symbol
+    lines.append(f"{'Beta (daily) vs ' + benchmark + ':':<{label_w}}{beta_str:>{value_w}}")
+    lines.append(f"{'Alpha (annualized) vs ' + benchmark + ':':<{label_w}}{alpha_str:>{value_w}}")
     lines.append(f"{'R² (fit quality):':<{label_w}}{r_sq_str:>{value_w}}     Obs: {obs_str}")
     note = risk_metrics.get("note")
     if note:
@@ -586,7 +598,7 @@ def _prepare_summary_data(data: Dict[str, Any]) -> Dict[str, Any]:
     history_df = history_raw.copy() if isinstance(history_raw, pd.DataFrame) else None
 
     index_symbols: List[str] = data.get("indexSymbols") or []
-    benchmark_symbol: str = data.get("benchmarkSymbol") or DEFAULT_BENCHMARK
+    benchmark_symbol: str = data.get("benchmarkSymbol") or get_config().benchmark_symbol
 
     return {
         "as_of_display": as_of_display,
@@ -600,8 +612,19 @@ def _prepare_summary_data(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def render_daily_portfolio_summary(data: Dict[str, Any]) -> str:
-    """Render the Daily Portfolio Summary using the standardized report template."""
+def render_daily_portfolio_summary(data: Dict[str, Any], config: Optional[SummaryConfig] = None) -> str:
+    """Render the Daily Portfolio Summary using the standardized report template.
+    
+    Args:
+        data: Portfolio data dictionary containing required fields
+        config: Optional configuration override for testing
+    """
+    
+    # Set configuration if provided (for testing)
+    original_config = None
+    if config is not None:
+        original_config = get_config()
+        set_config(config)
 
     try:
         # Validate required input data
@@ -609,7 +632,8 @@ def render_daily_portfolio_summary(data: Dict[str, Any]) -> str:
             logger.warning("Missing required input data, using defaults")
         
         # Warm cache for common symbols to improve performance
-        warm_cache_for_symbols(COMMON_SYMBOLS, ttl_minutes=5)
+        config = get_config()
+        warm_cache_for_symbols(COMMON_SYMBOLS, ttl_minutes=config.price_cache_ttl_minutes)
         
         # Prepare and validate input data
         parsed_data = _prepare_summary_data(data)
@@ -625,7 +649,7 @@ def render_daily_portfolio_summary(data: Dict[str, Any]) -> str:
         # Collect all symbols for price/volume data
         symbols_to_fetch = _collect_portfolio_symbols(holdings_df, index_symbols)
 
-        price_rows = [_fetch_price_volume(sym, months=3) for sym in symbols_to_fetch]
+        price_rows = [_fetch_price_volume(sym) for sym in symbols_to_fetch]
 
         # Calculate portfolio metrics
         metrics_data = _calculate_portfolio_metrics(holdings_df, summary_df, history_df, cash_balance, benchmark_symbol)
@@ -764,6 +788,10 @@ def render_daily_portfolio_summary(data: Dict[str, Any]) -> str:
         return "\n".join(lines)
     except Exception as e:  # pragma: no cover - defensive
         return f"Error rendering daily portfolio summary: {e}"
+    finally:
+        # Restore original configuration if it was overridden
+        if original_config is not None:
+            set_config(original_config)
 
 
 def build_daily_summary(portfolio_data: pd.DataFrame) -> str:
