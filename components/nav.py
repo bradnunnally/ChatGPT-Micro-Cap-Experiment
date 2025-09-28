@@ -75,7 +75,8 @@ def navbar(active_page: str) -> None:
     with header_cols[0]:
         st.title("AI Assisted Trading")
     with header_cols[1]:
-        if st.button("Quit App", key="quit_app", type="secondary"):
+        quit_key = f"quit_app_{Path(active_page).stem}" if active_page else "quit_app"
+        if st.button("Quit App", key=quit_key, type="secondary"):
             _shutdown_server()
 
     nav = st.container()

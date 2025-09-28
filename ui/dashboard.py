@@ -553,6 +553,8 @@ def render_dashboard() -> None:
                     "asOfDate": datetime.now().strftime("%Y-%m-%d"),
                     "cashBalance": cash_balance,
                     "holdings": holdings_payload,
+                    "summaryFrame": summary_df.copy(),
+                    "history": history.copy(),
                     "notes": {"materialNewsToday": "N/A", "catalystNotes": []},
                 }
                 st.session_state.daily_summary = render_daily_portfolio_summary(payload)
