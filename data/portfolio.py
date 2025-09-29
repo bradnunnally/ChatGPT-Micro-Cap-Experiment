@@ -262,169 +262,76 @@ def load_cash_balance() -> float:
 def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataFrame:
     """Recalculate today's portfolio values and persist them to the database.
 
-    Delegates snapshot assembly to pure compute_snapshot to keep logic consistent.
+    This function orchestrates the complete portfolio snapshot process:
+    1. Fetches current market prices for all tickers
+    2. Computes portfolio snapshot with all metrics
+    3. Persists data to database
+    4. Returns UI-friendly snapshot DataFrame
+    
+    Args:
+        portfolio_df: Current portfolio positions
+        cash: Current cash balance
+        
+    Returns:
+        Computed snapshot DataFrame with current prices and metrics
     """
-
+    # Step 1: Fetch current prices for all tickers
     tickers = portfolio_df[COL_TICKER].tolist()
+    prices = _fetch_current_prices(tickers)
     
-    # Try bulk fetch first
-    data = fetch_prices(tickers)
-    prices: dict[str, float] = {t: 0.0 for t in tickers}
+    # Step 2: Compute portfolio snapshot with current prices
+    snapshot_df = _compute_portfolio_snapshot(portfolio_df, prices, cash)
     
-    if not data.empty:
-        if isinstance(data.columns, pd.MultiIndex):
-            close = data["Close"].iloc[-1]
-            for t in tickers:
-                val = close.get(t)
-                if val is not None and not pd.isna(val):
-                    prices[t] = float(val)
-        elif set(["ticker", "current_price"]).issubset(set(data.columns)):
-            for _, r in data.iterrows():
-                cur = r.get("current_price") if hasattr(r, "get") else r["current_price"]
-                prices[str(r["ticker"])] = float(cur) if pd.notna(cur) else 0.0
-        else:
-            val = data.get("Close", pd.Series([None])).iloc[-1]
-            if tickers and not pd.isna(val):
-                prices[tickers[0]] = float(val)
+    # Step 3: Persist complete snapshot to database
+    _save_snapshot_to_database(portfolio_df, snapshot_df, cash)
     
-    # If bulk fetch failed or returned empty prices, try individual fallback
-    # Only fallback to individual lookups if bulk fetch returned data but yielded zero prices.
-    # When the bulk fetch returned an empty DataFrame (tests expect zeros without fallback)
-    # skip fallback to keep deterministic 0.0 pricing.
-    if (not data.empty) and all(price == 0.0 for price in prices.values()) and tickers:
-        from services.market import get_current_price
-        from services.manual_pricing import get_manual_price
-        import logging
+    # Return UI-friendly snapshot
+    return snapshot_df
+
+
+def _fetch_current_prices(tickers: list[str]) -> dict[str, float]:
+    """Fetch current prices for the given tickers.
+    
+    Args:
+        tickers: List of ticker symbols
         
-        logger = logging.getLogger(__name__)
-        logger.info("Bulk price fetch failed, attempting individual price lookups with manual fallback")
+    Returns:
+        Dict mapping tickers to current prices
+    """
+    from services.price_fetching import get_current_prices_for_portfolio
+    return get_current_prices_for_portfolio(tickers)
+
+
+def _compute_portfolio_snapshot(portfolio_df: pd.DataFrame, prices: dict[str, float], cash: float) -> pd.DataFrame:
+    """Compute portfolio snapshot with current prices and metrics.
+    
+    Args:
+        portfolio_df: Portfolio positions
+        prices: Current prices for tickers
+        cash: Cash balance
         
-        for ticker in tickers:
-            # First try manual pricing override
-            manual_price = get_manual_price(ticker)
-            if manual_price is not None:
-                prices[ticker] = float(manual_price)
-                logger.info(f"Using manual price for {ticker}: ${manual_price}")
-                continue
-            
-            # If no manual price, try API
-            try:
-                individual_price = get_current_price(ticker)
-                if individual_price is not None and individual_price > 0:
-                    prices[ticker] = float(individual_price)
-                    logger.info(f"Successfully fetched individual price for {ticker}: ${individual_price}")
-            except Exception as e:
-                logger.warning(f"Individual price fetch failed for {ticker}: {e}")
-                # Keep the 0.0 default
+    Returns:
+        Computed snapshot DataFrame
+    """
+    from services.data_persistence import transform_for_snapshot_input, transform_snapshot_output
+    
+    # Transform input data for compute_snapshot
+    input_df = transform_for_snapshot_input(portfolio_df)
+    
+    # Compute snapshot using pure business logic
+    raw_snapshot = _compute_snapshot(input_df, prices, cash, TODAY)
+    
+    # Transform output for UI/database compatibility
+    return transform_snapshot_output(raw_snapshot)
 
-    df = _compute_snapshot(
-        portfolio_df.rename(
-            columns={
-                COL_TICKER: "ticker",
-                COL_SHARES: "shares",
-                COL_STOP: "stop_loss",
-                COL_PRICE: "buy_price",
-                COL_COST: "cost_basis",
-            }
-        ),
-        prices,
-        cash,
-        TODAY,
-    )
 
-    # Create a lower-case version for DB insertion and returning to UI
-    df = df.rename(
-        columns={
-            "Date": "date",
-            "Ticker": "ticker",
-            "Shares": "shares",
-            "Cost Basis": "cost_basis",
-            "Stop Loss": "stop_loss",
-            "Current Price": "current_price",
-            "Total Value": "total_value",
-            "PnL": "pnl",
-            "Action": "action",
-            "Price Source": "price_source",
-            "Cash Balance": "cash_balance",
-            "Total Equity": "total_equity",
-        }
-    )
-
-    # Prepare DB-aligned DataFrame (subset to schema columns only)
-    df_db = df[
-        [
-            "date",
-            "ticker",
-            "shares",
-            "cost_basis",
-            "stop_loss",
-            "current_price",
-            "total_value",
-            "pnl",
-            "action",
-            "cash_balance",
-            "total_equity",
-        ]
-    ]
-
-    init_db()
-    with get_connection() as conn:
-        # Update current holdings
-        conn.execute("DELETE FROM portfolio")
-        if not portfolio_df.empty:
-            core_columns = ["ticker", "shares", "stop_loss", "buy_price", "cost_basis"]
-            available_columns = [col for col in core_columns if col in portfolio_df.columns]
-            if available_columns:
-                # Use executemany to avoid reliance on pandas.to_sql when using mocks
-                insert_sql = "INSERT INTO portfolio (ticker, shares, stop_loss, buy_price, cost_basis) VALUES (?, ?, ?, ?, ?)"
-                rows = (
-                    portfolio_df.reindex(columns=core_columns)
-                    .fillna(0)
-                    .apply(
-                        lambda r: (
-                            r["ticker"],
-                            float(r["shares"]),
-                            float(r["stop_loss"]),
-                            float(r["buy_price"]),
-                            float(r["cost_basis"]),
-                        ),
-                        axis=1,
-                    )
-                    .tolist()
-                )
-                for row in rows:
-                    conn.execute(insert_sql, row)
-
-        # Update cash balance (single row table)
-        conn.execute("INSERT OR REPLACE INTO cash (id, balance) VALUES (0, ?)", (float(cash),))
-
-        # Store daily snapshot for the day using pandas to_sql so tests can patch it
-        conn.execute("DELETE FROM portfolio_history WHERE date = ?", (TODAY,))
-        try:
-            df.to_sql("portfolio_history", conn, if_exists="append", index=False)
-        except Exception:
-            # Fallback to manual inserts when working with mocked connections
-            insert_hist = (
-                "INSERT INTO portfolio_history (date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            )
-            for _, r in df.iterrows():
-                conn.execute(
-                    insert_hist,
-                    (
-                        r["date"],
-                        r["ticker"],
-                        float(r["shares"]) if r["shares"] != "" else 0.0,
-                        float(r["cost_basis"]) if r["cost_basis"] != "" else 0.0,
-                        float(r["stop_loss"]) if r["stop_loss"] != "" else 0.0,
-                        float(r["current_price"]) if r["current_price"] != "" else 0.0,
-                        float(r["total_value"]) if r["total_value"] != "" else 0.0,
-                        float(r["pnl"]) if r["pnl"] != "" else 0.0,
-                        r["action"],
-                        float(r["cash_balance"]) if r["cash_balance"] != "" else 0.0,
-                        float(r["total_equity"]) if r["total_equity"] != "" else 0.0,
-                    ),
-                )
-
-    # Return the UI-friendly DataFrame (lowercase keys plus price_source)
-    return df
+def _save_snapshot_to_database(portfolio_df: pd.DataFrame, snapshot_df: pd.DataFrame, cash: float) -> None:
+    """Save complete portfolio snapshot to database.
+    
+    Args:
+        portfolio_df: Current portfolio positions
+        snapshot_df: Computed snapshot
+        cash: Cash balance
+    """
+    from services.data_persistence import save_portfolio_data
+    save_portfolio_data(portfolio_df, snapshot_df, cash)

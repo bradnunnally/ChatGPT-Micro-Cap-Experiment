@@ -7,6 +7,8 @@ import streamlit as st
 import requests
 
 from config import get_provider, is_dev_stage
+from core.retry import retry_with_backoff
+from core.price_utils import extract_price_from_quote, create_price_row, extract_price_from_dataframe
 try:  # micro provider always expected now; keep defensive import
     from micro_config import get_provider as get_micro_provider
     from micro_data_providers import (
@@ -115,8 +117,8 @@ def fetch_price_v2(ticker: str) -> Optional[float]:
     if not prov:
         return fetch_price(ticker)
     try:
-        q = prov.get_quote(ticker)
-        return q.get("price") if q else None
+        quote = prov.get_quote(ticker)
+        return extract_price_from_quote(quote)
     except Exception as e:  # pragma: no cover - defensive
         logger.error("micro_price_failed", extra={"ticker": ticker, "error": str(e)})
         return fetch_price(ticker)
@@ -128,10 +130,10 @@ def fetch_prices_v2(tickers: List[str]) -> pd.DataFrame:
     rows = []
     for t in tickers:
         try:
-            q = prov.get_quote(t) or {}
-            rows.append({"ticker": t, "current_price": q.get("price"), "pct_change": q.get("percent")})
+            quote = prov.get_quote(t)
+            rows.append(create_price_row(t, quote=quote))
         except Exception:  # pragma: no cover
-            rows.append({"ticker": t, "current_price": None, "pct_change": None})
+            rows.append(create_price_row(t))  # Creates row with None values
     return pd.DataFrame(rows)
 
 # Global rate limiting state (retained from original implementation)
@@ -140,12 +142,8 @@ _min_request_interval = 1.0
 
 
 # --- Utility helpers expected by tests ---------------------------------------------------
-def is_valid_price(value: Any) -> bool:
-    return isinstance(value, (int, float)) and value > 0  # simple test helper
-
-
-def validate_price_data(value: Any) -> bool:  # backward compatible name
-    return is_valid_price(value)
+# Import consolidated validation functions for consistency
+from core.validation import is_valid_price, validate_price_data
 
 
 def calculate_percentage_change(old: float | int | None, new: float | int | None) -> float | None:
@@ -188,14 +186,7 @@ def _get_session():
     return session
 
 
-def _retry(fn: Callable[[], Any], attempts: int = 3, base_delay: float = 0.3) -> Any:
-    for i in range(attempts):
-        try:
-            return fn()
-        except Exception:  # pragma: no cover
-            if i == attempts - 1:
-                return None
-            time.sleep(base_delay * (2**i))
+# Retry logic moved to core/retry.py for reuse across modules
 
 def _legacy_market_test_mode() -> bool:  # pragma: no cover - legacy shim retained for compatibility
     return False
@@ -260,10 +251,10 @@ def fetch_prices(tickers: list[str]) -> pd.DataFrame:
         rows = []
         for t in tickers:
             try:
-                q = prov.get_quote(t) or {}
-                rows.append({"ticker": t, "current_price": q.get("price"), "pct_change": q.get("percent")})
+                quote = prov.get_quote(t)
+                rows.append(create_price_row(t, quote=quote))
             except Exception:
-                rows.append({"ticker": t, "current_price": None, "pct_change": None})
+                rows.append(create_price_row(t))
         return pd.DataFrame(rows)
 
     if is_dev_stage() and not _legacy_market_test_mode():
@@ -275,17 +266,10 @@ def fetch_prices(tickers: list[str]) -> pd.DataFrame:
         for t in tickers:
             try:
                 hist = provider.get_history(t, start, end)
-                if not hist.empty:
-                    close_col = "Close" if "Close" in hist.columns else ("close" if "close" in hist.columns else None)
-                    if close_col and not hist[close_col].dropna().empty:
-                        val = float(hist[close_col].dropna().iloc[-1])
-                    else:
-                        val = None
-                else:
-                    val = None
+                price = extract_price_from_dataframe(hist)
             except Exception:
-                val = None
-            rows.append({"ticker": t, "current_price": val, "pct_change": None})
+                price = None
+            rows.append(create_price_row(t, price=price))
         return _pd.DataFrame(rows)
     return pd.DataFrame(columns=["ticker", "current_price", "pct_change"])
 def get_day_high_low(ticker: str) -> tuple[float, float]:
@@ -371,7 +355,7 @@ def get_day_high_low(ticker: str) -> tuple[float, float]:
         return None
     
     # Use retry logic with reduced attempts to avoid rate limiting
-    result = _retry(_try_get_high_low, attempts=2, base_delay=1.0)
+    result = retry_with_backoff(_try_get_high_low, attempts=2, base_delay=1.0)
     
     if result is None:
         # Final deterministic fallback (tests expect numeric values for valid symbols)
@@ -389,10 +373,10 @@ def get_current_price(ticker: str) -> float | None:
 
     if prov:
         try:
-            q = prov.get_quote(ticker) or {}
-            price = q.get("price")
-            if price is not None and price > 0:
-                return float(price)
+            quote = prov.get_quote(ticker)
+            price = extract_price_from_quote(quote)
+            if price is not None:
+                return price
         except Exception:  # pragma: no cover - if live provider fails, defer to fallback
             if not prov_is_synthetic:
                 logger.error(
@@ -408,17 +392,14 @@ def get_current_price(ticker: str) -> float | None:
             end = _pd.Timestamp.utcnow().normalize()
             start = end - _pd.Timedelta(days=5)
             df = prov.get_daily_candles(ticker, start=start, end=end)
-            if not df.empty:
-                for candidate in ("close", "Close"):
-                    if candidate in df.columns:
-                        closes = df[candidate].dropna()
-                        if not closes.empty:
-                            return float(closes.iloc[-1])
-            q = prov.get_quote(ticker)
-            if q:
-                price = q.get("price")
-                if price is not None and price > 0:
-                    return float(price)
+            price = extract_price_from_dataframe(df, ["close", "Close"])
+            if price is not None:
+                return price
+            
+            quote = prov.get_quote(ticker)
+            price = extract_price_from_quote(quote)
+            if price is not None:
+                return price
         except Exception:  # pragma: no cover - synthetic fallback best effort
             pass
 
@@ -452,16 +433,8 @@ def get_cached_price(ticker: str, ttl_seconds: float | int | None = None) -> flo
 import re
 
 
-def validate_ticker_format(ticker: str) -> bool:
-    """Basic ticker validation used in tests.
-
-    Accepts uppercase tickers (1-5 chars) optionally with a single dot suffix segment
-    like BRK.B. Rejects lowercase, numeric-only, or empty strings.
-    """
-    if not isinstance(ticker, str) or not ticker:
-        return False
-    pattern = r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$"  # pragma: no cover (regex construction trivial)
-    return re.match(pattern, ticker) is not None
+# Import consolidated validation function for consistency
+from core.validation import validate_ticker_format
 
 
 def sanitize_market_data(df: pd.DataFrame) -> pd.DataFrame:

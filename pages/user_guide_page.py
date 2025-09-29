@@ -142,7 +142,8 @@ with st.expander("Admin / Maintenance (advanced)", expanded=False):
         try:
             conn = sqlite3.connect(str(db_path))
             cur = conn.cursor()
-            for table in ("portfolio", "cash", "trade_log", "portfolio_history"):
+            from core.constants import ALL_MAIN_TABLES
+            for table in ALL_MAIN_TABLES:
                 try:
                     cur.execute(f"DELETE FROM {table}")
                 except Exception as e:  # pragma: no cover
