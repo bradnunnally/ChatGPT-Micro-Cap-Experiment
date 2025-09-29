@@ -83,31 +83,32 @@ def manual_buy(
         portfolio_df = getattr(st.session_state, "portfolio")
         # Fallback to 10,000 if session state isn't fully active in test context
         cash = float(getattr(st.session_state, "cash", 10000.0))
+    # Validate input parameters
     if shares <= 0 or price <= 0:
+        from core.trading_error_utils import audit_trade_failure, create_trade_response
         msg = "Shares and price must be positive."
-        log_error(msg)
-        audit_logger.trade(
-            "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
-        )
-        return False if session_mode else (False, msg, portfolio_df, cash)
+        audit_trade_failure("buy", ticker, shares, price, msg)
+        return create_trade_response(False, msg, portfolio_df, cash, session_mode)
+    
     # For session_mode tests, skip day range validation; rely on provided price
     range_notice: str | None = None
     if not session_mode:
+        # Handle market data fetching with consistent error handling
+        from core.trading_error_utils import handle_market_data_failure
         has_market_data = True
+        day_high = day_low = None
+        
         try:
             day_high, day_low = get_day_high_low(ticker)
-        except (MarketDataDownloadError, NoMarketDataError) as exc:
-            # Graceful handling for missing data - allow trade to proceed without validation
-            has_market_data = False
-            day_high = day_low = None
-            logger.warning(f"No market data for {ticker}, proceeding without price validation", 
-                         extra={"event": "market_data_fallback", "ticker": ticker, "reason": str(exc)})
-        except Exception as exc:  # pragma: no cover - other network errors
-            log_error(f"Market data error for {ticker}: {str(exc)}")
-            audit_logger.trade(
-                "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=str(exc)
+        except Exception as exc:
+            has_market_data, error_msg = handle_market_data_failure(
+                "buy_price_validation", ticker, exc, allow_fallback=True
             )
-            return False if session_mode else (False, str(exc), portfolio_df, cash)
+            if error_msg:
+                # Critical market data error - fail the trade
+                from core.trading_error_utils import audit_trade_failure, create_trade_response
+                audit_trade_failure("buy", ticker, shares, price, error_msg)
+                return create_trade_response(False, error_msg, portfolio_df, cash, session_mode)
         
         # Only enforce range validation when we actually have market data
         if has_market_data:
@@ -142,14 +143,11 @@ def manual_buy(
             "Reason": "MANUAL BUY - New position",
         }
         if repo is not None:
-            try:
-                repo.append_trade_log(log)
-            except Exception as exc:  # pragma: no cover
-                log_error(str(exc))
-                logger.exception(
-                    "Repository append_trade_log failed",
-                    extra={"event": "trade_log", "action": "buy", "ticker": ticker},
-                )
+            from core.trading_error_utils import safe_repository_operation
+            success, error_msg = safe_repository_operation(
+                "trade_log_append", repo.append_trade_log, log
+            )
+            # Continue even if trade log fails - this is audit data, not critical for trade execution
         else:
             append_trade_log(log)
 
@@ -165,14 +163,11 @@ def manual_buy(
     cash -= cost
     # Persist snapshot via repository when provided; otherwise defer to data.portfolio
     if repo is not None:
-        try:
-            repo.save_snapshot(portfolio_df, cash)
-        except Exception as exc:  # pragma: no cover
-            log_error(str(exc))
-            logger.exception(
-                "Repository save_snapshot failed",
-                extra={"event": "snapshot", "phase": "buy", "ticker": ticker},
-            )
+        from core.trading_error_utils import safe_repository_operation
+        success, error_msg = safe_repository_operation(
+            "portfolio_snapshot_save", repo.save_snapshot, portfolio_df, cash
+        )
+        # Continue even if snapshot save fails - trade is already executed
     else:
         # Call through module to respect test patches on data.portfolio.save_portfolio_snapshot
         portfolio_data.save_portfolio_snapshot(portfolio_df, cash)
