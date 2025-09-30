@@ -154,3 +154,13 @@ def init_db() -> None:
                     getattr(conn, "execute")(stmt)
                 except Exception:
                     pass
+        
+        # Apply multi-portfolio migration if needed (preserves all existing data)
+        try:
+            from data.multi_portfolio_migration import ensure_multi_portfolio_schema
+            ensure_multi_portfolio_schema(conn)
+        except Exception as e:
+            # Log but don't fail - migration is additive, not breaking
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Multi-portfolio migration warning: {e}")

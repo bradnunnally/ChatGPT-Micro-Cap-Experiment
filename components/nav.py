@@ -11,6 +11,52 @@ import streamlit as st
 from services.session import init_session_state
 
 
+def _render_portfolio_selector() -> None:
+    """Render the portfolio selection dropdown."""
+    try:
+        from services.portfolio_service import portfolio_service
+        
+        # Get available portfolios
+        portfolios = portfolio_service.get_all_active_portfolios()
+        if len(portfolios) <= 1:
+            # Only show selector if there are multiple portfolios
+            return
+        
+        # Create options for selectbox
+        options = [(p.name, p.id) for p in portfolios]
+        portfolio_names = [name for name, _ in options]
+        portfolio_ids = [pid for _, pid in options]
+        
+        # Get current selection
+        current_portfolio = portfolio_service.get_current_portfolio()
+        current_index = 0
+        if current_portfolio:
+            try:
+                current_index = portfolio_ids.index(current_portfolio.id)
+            except ValueError:
+                current_index = 0
+        
+        # Render selectbox
+        selected_name = st.selectbox(
+            "Portfolio",
+            options=portfolio_names,
+            index=current_index,
+            key="portfolio_selector",
+            help="Select active portfolio"
+        )
+        
+        # Handle selection change
+        if selected_name:
+            selected_id = portfolio_ids[portfolio_names.index(selected_name)]
+            if current_portfolio is None or selected_id != current_portfolio.id:
+                portfolio_service.set_current_portfolio(selected_id)
+                st.rerun()  # Refresh to update data
+                
+    except Exception as e:
+        # Fail gracefully - portfolio selection is optional
+        st.caption("Portfolio selection unavailable")
+
+
 def _shutdown_server() -> None:
     """Initiate a graceful app shutdown after notifying the user."""
 
@@ -71,10 +117,13 @@ def navbar(active_page: str) -> None:
         unsafe_allow_html=True,
     )
 
-    header_cols = st.columns([6, 1])
+    header_cols = st.columns([4, 2, 1])
     with header_cols[0]:
         st.title("AI Assisted Trading")
     with header_cols[1]:
+        # Portfolio selector
+        _render_portfolio_selector()
+    with header_cols[2]:
         quit_key = f"quit_app_{Path(active_page).stem}" if active_page else "quit_app"
         if st.button("Quit App", key=quit_key, type="secondary"):
             _shutdown_server()

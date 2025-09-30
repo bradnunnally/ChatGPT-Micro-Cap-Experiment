@@ -50,8 +50,11 @@ def _ensure_database_ready() -> None:
         )
 
 
-def _load_portfolio_from_database() -> tuple[pd.DataFrame, float | None]:
-    """Load portfolio and cash data from database.
+def _load_portfolio_from_database(portfolio_id: int | None = None) -> tuple[pd.DataFrame, float | None]:
+    """Load portfolio and cash data from database for a specific portfolio.
+    
+    Args:
+        portfolio_id: Portfolio ID to load. If None, uses current portfolio context.
     
     Returns:
         Tuple of (portfolio_df, cash_balance) where cash_balance is None if not found
@@ -62,24 +65,34 @@ def _load_portfolio_from_database() -> tuple[pd.DataFrame, float | None]:
     from core.error_utils import log_and_raise_domain_error
     from core.errors import RepositoryError
     from infra.logging import get_logger
+    from services.portfolio_service import ensure_portfolio_context_in_queries
     
     logger = get_logger(__name__)
+    
+    # Get portfolio ID from context if not provided (maintains backward compatibility)
+    if portfolio_id is None:
+        portfolio_id = ensure_portfolio_context_in_queries()
     
     try:
         with get_connection() as conn:
             try:
-                portfolio_df = pd.read_sql_query("SELECT * FROM portfolio", conn)
+                # Load portfolio data for specific portfolio
+                portfolio_df = pd.read_sql_query(
+                    "SELECT ticker, shares, stop_loss, buy_price, cost_basis FROM portfolio WHERE portfolio_id = ?", 
+                    conn, params=(portfolio_id,)
+                )
             except Exception:
                 # Fallback for tests that provide a mocked connection
                 rows = conn.execute(
-                    "SELECT ticker, shares, stop_loss, buy_price, cost_basis FROM portfolio"
+                    "SELECT ticker, shares, stop_loss, buy_price, cost_basis FROM portfolio WHERE portfolio_id = ?",
+                    (portfolio_id,)
                 ).fetchall()
                 portfolio_df = pd.DataFrame(
                     rows, columns=["ticker", "shares", "stop_loss", "buy_price", "cost_basis"]
                 ).copy()
             
             try:
-                cash_row = conn.execute("SELECT balance FROM cash WHERE id = 0").fetchone()
+                cash_row = conn.execute("SELECT balance FROM cash WHERE portfolio_id = ?", (portfolio_id,)).fetchone()
                 cash_balance = float(cash_row[0]) if cash_row is not None else None
             except Exception:
                 cash_balance = None
@@ -254,9 +267,12 @@ def _seed_dev_stage_portfolio() -> None:
     """
     try:
         init_db()
+        from services.portfolio_service import ensure_portfolio_context_in_queries
+        portfolio_id = ensure_portfolio_context_in_queries()
+        
         with get_connection() as conn:
-            existing = conn.execute("SELECT COUNT(*) FROM portfolio").fetchone()[0]
-            cash_row = conn.execute("SELECT balance FROM cash WHERE id = 0").fetchone()
+            existing = conn.execute("SELECT COUNT(*) FROM portfolio WHERE portfolio_id = ?", (portfolio_id,)).fetchone()[0]
+            cash_row = conn.execute("SELECT balance FROM cash WHERE portfolio_id = ?", (portfolio_id,)).fetchone()
             if existing > 0 or cash_row is not None:
                 return
             seed_rows = [
@@ -265,11 +281,11 @@ def _seed_dev_stage_portfolio() -> None:
             ]
             for r in seed_rows:
                 conn.execute(
-                    "INSERT INTO portfolio (ticker, shares, stop_loss, buy_price, cost_basis) VALUES (?, ?, ?, ?, ?)",
-                    r,
+                    "INSERT INTO portfolio (ticker, shares, stop_loss, buy_price, cost_basis, portfolio_id) VALUES (?, ?, ?, ?, ?, ?)",
+                    r + (portfolio_id,),
                 )
             # Seed starting cash
-            conn.execute("INSERT OR REPLACE INTO cash (id, balance) VALUES (0, ?)", (10_000.00,))
+            conn.execute("INSERT OR REPLACE INTO cash (id, balance, portfolio_id) VALUES (0, ?, ?)", (10_000.00, portfolio_id))
             # Generate deterministic multi-day history inline for tests
             from datetime import datetime, timedelta
             total_equity_static = 10_000.00 + sum(x[1] * x[3] for x in seed_rows)
@@ -281,7 +297,7 @@ def _seed_dev_stage_portfolio() -> None:
                     current_price = buy_price * (1 + 0.01 * (20 - days_ago))
                     value = shares * current_price
                     conn.execute(
-                        "INSERT INTO portfolio_history (date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO portfolio_history (date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity, portfolio_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             date_str,
                             r[0],
@@ -294,15 +310,17 @@ def _seed_dev_stage_portfolio() -> None:
                             "HOLD",
                             "",
                             "",
+                            portfolio_id,
                         ),
                     )
                 conn.execute(
-                    "INSERT INTO portfolio_history (date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity) VALUES (?, 'TOTAL', '', '', '', '', ?, 0.0, '', ?, ?)",
+                    "INSERT INTO portfolio_history (date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity, portfolio_id) VALUES (?, 'TOTAL', '', '', '', '', ?, 0.0, '', ?, ?, ?)",
                     (
                         date_str,
                         sum(x[1] * x[3] for x in seed_rows),
                         10_000.00,
                         total_equity_static,
+                        portfolio_id,
                     ),
                 )
     except Exception:
