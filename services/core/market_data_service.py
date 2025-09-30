@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import time
+import weakref
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Callable, Optional
 
 import pandas as pd
 
@@ -49,6 +51,8 @@ class MarketDataService:
         circuit_fail_threshold: int = 3,
         circuit_cooldown: float = 60.0,
         price_provider: Callable[[str], float] | None = None,
+        disk_flush_interval: float = 5.0,
+        disk_flush_batch: int = 8,
     ) -> None:
         self._logger = get_logger(__name__)
         self._ttl = ttl_seconds if ttl_seconds is not None else int(settings.cache_ttl_seconds)
@@ -68,6 +72,21 @@ class MarketDataService:
         self._disk_cache_day = datetime.now(UTC).strftime("%Y-%m-%d")
         self._disk_cache_path = self._disk_cache_dir / f"{self._disk_cache_day}.json"
         self._daily_disk_cache = self._load_disk_cache(self._disk_cache_path)
+
+        self._disk_flush_interval = max(0.0, float(disk_flush_interval))
+        self._disk_flush_batch = max(1, int(disk_flush_batch))
+        self._disk_cache_dirty = False
+        self._pending_disk_writes = 0
+        self._last_disk_flush = self._now()
+
+        self_ref = weakref.ref(self)  # flush dirty cache on interpreter exit
+
+        def _flush_on_exit(ref: weakref.ReferenceType["MarketDataService"]) -> None:
+            inst = ref()
+            if inst is not None:
+                inst._flush_disk_cache_if_needed(force=True)
+
+        atexit.register(_flush_on_exit, self_ref)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -91,6 +110,29 @@ class MarketDataService:
             os.replace(tmp, self._disk_cache_path)
         except Exception:  # pragma: no cover
             pass
+        else:
+            self._disk_cache_dirty = False
+            self._pending_disk_writes = 0
+            self._last_disk_flush = self._now()
+
+    def _flush_disk_cache_if_needed(self, force: bool = False) -> None:
+        if not self._disk_cache_dirty:
+            return
+
+        if force:
+            self._save_disk_cache()
+            return
+
+        if self._pending_disk_writes >= self._disk_flush_batch:
+            self._save_disk_cache()
+            return
+
+        if self._disk_flush_interval == 0.0:
+            self._save_disk_cache()
+            return
+
+        if (self._now() - self._last_disk_flush) >= self._disk_flush_interval:
+            self._save_disk_cache()
 
     def _now(self) -> float:
         return time.time()
@@ -126,8 +168,15 @@ class MarketDataService:
 
     def _record_success(self, symbol: str, price: float) -> None:
         self._circuit[symbol] = CircuitState()
-        self._daily_disk_cache[symbol] = float(price)
-        self._save_disk_cache()
+        price_float = float(price)
+        current = self._daily_disk_cache.get(symbol)
+        if current is not None and current == price_float:
+            return
+
+        self._daily_disk_cache[symbol] = price_float
+        self._disk_cache_dirty = True
+        self._pending_disk_writes += 1
+        self._flush_disk_cache_if_needed()
 
     # ------------------------------------------------------------------
     # Public API
@@ -135,6 +184,8 @@ class MarketDataService:
     def get_price(self, ticker: str) -> Optional[float]:
         validate_ticker(ticker)
         symbol = ticker.strip().upper()
+
+        self._flush_disk_cache_if_needed()
 
         # Memory cache
         now_ts = self._now()
@@ -162,6 +213,7 @@ class MarketDataService:
         # Day rollover for disk cache
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         if today != self._disk_cache_day:
+            self._flush_disk_cache_if_needed(force=True)
             self._disk_cache_day = today
             self._disk_cache_path = self._disk_cache_dir / f"{self._disk_cache_day}.json"
             self._daily_disk_cache = self._load_disk_cache(self._disk_cache_path)
@@ -239,4 +291,3 @@ class MarketDataService:
                 return None
             raise MarketDataDownloadError(str(last_exc))
         return None
-

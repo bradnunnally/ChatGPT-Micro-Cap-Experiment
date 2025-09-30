@@ -99,9 +99,16 @@ def test_generate_daily_summary_merges_history_and_sets_session(monkeypatch, tmp
             "catalystDate": None,
         }
     ]
+    def _stub_history(symbol, months=3):
+        dates = pd.date_range(end=today, periods=3, freq="D")
+        return pd.DataFrame({"date": dates, "close": [100.0, 101.0, 102.0], "volume": [1_000_000, 1_050_000, 990_000]})
+
+    monkeypatch.setattr("ui.summary.MARKET_SERVICE.fetch_history", _stub_history)
+
     payload = {"asOfDate": today, "cashBalance": 5000.0, "holdings": holdings_payload}
     md = render_daily_portfolio_summary(payload)
-    assert "Total Equity" in md or "Total Equity" in md
+    assert "Daily Results" in md
+    assert "[ Holdings ]" in md
     # The test uses the first non-TOTAL ticker from the snapshot; assert that
     # ticker appears in the rendered markdown rather than hard-coding 'ABC'.
     assert holdings_payload[0]["ticker"] in md

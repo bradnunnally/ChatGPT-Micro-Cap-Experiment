@@ -26,7 +26,23 @@ class PortfolioService:
         self._positions: Dict[str, Position] = {}
 
     def add_position(self, position: Position) -> None:
-        self._positions[position.ticker] = position
+        existing = self._positions.get(position.ticker)
+        if existing is None:
+            self._positions[position.ticker] = position
+            return
+
+        total_shares = existing.shares + position.shares
+        total_cost_basis = existing.cost_basis + position.cost_basis
+
+        stop_loss = position.stop_loss if position.stop_loss is not None else existing.stop_loss
+
+        self._positions[position.ticker] = Position(
+            ticker=position.ticker,
+            shares=total_shares,
+            price=position.price,
+            cost_basis=total_cost_basis,
+            stop_loss=stop_loss,
+        )
 
     def remove_position(self, ticker: str) -> None:
         self._positions.pop(ticker, None)

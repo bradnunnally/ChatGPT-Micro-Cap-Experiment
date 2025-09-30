@@ -32,7 +32,8 @@ def clear_database() -> None:
         cursor = conn.cursor()
 
         # Clear all tables
-        tables = ["portfolio", "cash", "trade_log", "portfolio_history"]
+        from core.constants import ALL_MAIN_TABLES
+        tables = ALL_MAIN_TABLES
 
         for table in tables:
             try:

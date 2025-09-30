@@ -83,30 +83,32 @@ def manual_buy(
         portfolio_df = getattr(st.session_state, "portfolio")
         # Fallback to 10,000 if session state isn't fully active in test context
         cash = float(getattr(st.session_state, "cash", 10000.0))
+    # Validate input parameters
     if shares <= 0 or price <= 0:
+        from core.trading_error_utils import audit_trade_failure, create_trade_response
         msg = "Shares and price must be positive."
-        log_error(msg)
-        audit_logger.trade(
-            "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
-        )
-        return False if session_mode else (False, msg, portfolio_df, cash)
+        audit_trade_failure("buy", ticker, shares, price, msg)
+        return create_trade_response(False, msg, portfolio_df, cash, session_mode)
+    
     # For session_mode tests, skip day range validation; rely on provided price
+    range_notice: str | None = None
     if not session_mode:
+        # Handle market data fetching with consistent error handling
+        from core.trading_error_utils import handle_market_data_failure
         has_market_data = True
+        day_high = day_low = None
+        
         try:
             day_high, day_low = get_day_high_low(ticker)
-        except (MarketDataDownloadError, NoMarketDataError) as exc:
-            # Graceful handling for missing data - allow trade to proceed without validation
-            has_market_data = False
-            day_high = day_low = None
-            logger.warning(f"No market data for {ticker}, proceeding without price validation", 
-                         extra={"event": "market_data_fallback", "ticker": ticker, "reason": str(exc)})
-        except Exception as exc:  # pragma: no cover - other network errors
-            log_error(f"Market data error for {ticker}: {str(exc)}")
-            audit_logger.trade(
-                "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=str(exc)
+        except Exception as exc:
+            has_market_data, error_msg = handle_market_data_failure(
+                "buy_price_validation", ticker, exc, allow_fallback=True
             )
-            return False if session_mode else (False, str(exc), portfolio_df, cash)
+            if error_msg:
+                # Critical market data error - fail the trade
+                from core.trading_error_utils import audit_trade_failure, create_trade_response
+                audit_trade_failure("buy", ticker, shares, price, error_msg)
+                return create_trade_response(False, error_msg, portfolio_df, cash, session_mode)
         
         # Only enforce range validation when we actually have market data
         if has_market_data:
@@ -118,6 +120,7 @@ def manual_buy(
                     "buy", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
                 )
                 return False if session_mode else (False, msg, portfolio_df, cash)
+            range_notice = validation.reason
 
     cost = compute_cost(shares, price)
     if cost > cash:
@@ -140,14 +143,11 @@ def manual_buy(
             "Reason": "MANUAL BUY - New position",
         }
         if repo is not None:
-            try:
-                repo.append_trade_log(log)
-            except Exception as exc:  # pragma: no cover
-                log_error(str(exc))
-                logger.exception(
-                    "Repository append_trade_log failed",
-                    extra={"event": "trade_log", "action": "buy", "ticker": ticker},
-                )
+            from core.trading_error_utils import safe_repository_operation
+            success, error_msg = safe_repository_operation(
+                "trade_log_append", repo.append_trade_log, log
+            )
+            # Continue even if trade log fails - this is audit data, not critical for trade execution
         else:
             append_trade_log(log)
 
@@ -163,18 +163,17 @@ def manual_buy(
     cash -= cost
     # Persist snapshot via repository when provided; otherwise defer to data.portfolio
     if repo is not None:
-        try:
-            repo.save_snapshot(portfolio_df, cash)
-        except Exception as exc:  # pragma: no cover
-            log_error(str(exc))
-            logger.exception(
-                "Repository save_snapshot failed",
-                extra={"event": "snapshot", "phase": "buy", "ticker": ticker},
-            )
+        from core.trading_error_utils import safe_repository_operation
+        success, error_msg = safe_repository_operation(
+            "portfolio_snapshot_save", repo.save_snapshot, portfolio_df, cash
+        )
+        # Continue even if snapshot save fails - trade is already executed
     else:
         # Call through module to respect test patches on data.portfolio.save_portfolio_snapshot
         portfolio_data.save_portfolio_snapshot(portfolio_df, cash)
     msg = f"Bought {shares} shares of {ticker} at ${price:.2f}."
+    if range_notice:
+        msg = f"{msg} {range_notice}"
     if session_mode:
         st.session_state.portfolio = portfolio_df
         st.session_state.cash = cash
@@ -221,6 +220,31 @@ def manual_sell(
         )
         return False if session_mode else (False, msg, portfolio_df, cash)
 
+    matching = portfolio_df[portfolio_df[COL_TICKER] == ticker].copy()
+    total_shares_available = float(matching[COL_SHARES].astype(float).sum())
+    if total_shares_available <= 0:
+        msg = f"No shares available to sell for {ticker}."
+        log_error(msg)
+        audit_logger.trade(
+            "sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
+        )
+        return False if session_mode else (False, msg, portfolio_df, cash)
+
+    requested_shares = float(shares)
+    if requested_shares > total_shares_available + 1e-9:
+        owned_display = (
+            int(total_shares_available)
+            if total_shares_available.is_integer()
+            else round(total_shares_available, 4)
+        )
+        msg = f"Trying to sell {shares} shares but only own {owned_display}."
+        log_error(msg)
+        audit_logger.trade(
+            "sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
+        )
+        return False if session_mode else (False, msg, portfolio_df, cash)
+
+    range_notice: str | None = None
     if not session_mode:
         has_market_data = True
         try:
@@ -239,28 +263,24 @@ def manual_sell(
             return False if session_mode else (False, str(exc), portfolio_df, cash)
         
         # Only enforce range validation when we actually have market data
-        if has_market_data and not (day_low <= price <= day_high):
-            msg = f"Price outside today's range {day_low:.2f}-{day_high:.2f}"
-            log_error(msg)
-            audit_logger.trade(
-                "sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
-            )
-            return False if session_mode else (False, msg, portfolio_df, cash)
+        if has_market_data:
+            validation = validate_buy_price(price, day_low, day_high)
+            if not validation.valid:
+                msg = validation.reason or "Invalid price"
+                log_error(msg)
+                audit_logger.trade(
+                    "sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
+                )
+                return False if session_mode else (False, msg, portfolio_df, cash)
+            range_notice = validation.reason
 
-    row = portfolio_df[portfolio_df[COL_TICKER] == ticker].iloc[0]
-    total_shares = float(row[COL_SHARES])
-    if shares > total_shares:
-        msg = f"Trying to sell {shares} shares but only own {total_shares}."
-        log_error(msg)
-        audit_logger.trade(
-            "sell", ticker=ticker, shares=shares, price=price, status="failure", reason=msg
-        )
-        return False if session_mode else (False, msg, portfolio_df, cash)
-
-    buy_price = float(row[COL_PRICE])
+    total_cost_basis = float(matching[COL_COST].astype(float).sum())
+    buy_price = (total_cost_basis / total_shares_available) if total_shares_available > 0 else 0.0
+    cost_basis = buy_price * requested_shares
+    stop_series = matching[COL_STOP].dropna()
+    stop_loss_value = float(stop_series.iloc[-1]) if not stop_series.empty else 0.0
     # Use pure function for pnl calculation
     pnl = _core_calculate_pnl(buy_price=buy_price, current_price=price, shares=shares)
-    cost_basis = buy_price * shares
 
     if not session_mode:
         log = {
@@ -286,13 +306,28 @@ def manual_sell(
         else:
             append_trade_log(log)
 
-    # Delegate sell math to pure function
-    portfolio_df, _ = _apply_sell(
-        portfolio_df,
+    aggregate_input = pd.DataFrame(
+        {
+            COL_TICKER: [ticker],
+            COL_SHARES: [total_shares_available],
+            COL_STOP: [stop_loss_value],
+            COL_PRICE: [buy_price],
+            COL_COST: [total_cost_basis],
+        }
+    )
+
+    updated_slice, _ = _apply_sell(
+        aggregate_input,
         ticker=ticker,
-        shares=shares,
+        shares=requested_shares,
         price=price,
     )
+
+    remaining_df = portfolio_df[portfolio_df[COL_TICKER] != ticker].copy()
+    if not updated_slice.empty:
+        portfolio_df = pd.concat([remaining_df, updated_slice], ignore_index=True)
+    else:
+        portfolio_df = remaining_df.reset_index(drop=True)
 
     cash += price * shares
     # Persist snapshot via repository when provided; otherwise defer to data.portfolio
@@ -309,6 +344,8 @@ def manual_sell(
         # Call through module to respect test patches on data.portfolio.save_portfolio_snapshot
         portfolio_data.save_portfolio_snapshot(portfolio_df, cash)
     msg = f"Sold {shares} shares of {ticker} at ${price:.2f}."
+    if range_notice:
+        msg = f"{msg} {range_notice}"
     if session_mode:
         st.session_state.portfolio = portfolio_df
         st.session_state.cash = cash

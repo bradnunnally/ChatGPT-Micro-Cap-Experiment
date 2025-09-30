@@ -31,84 +31,218 @@ class PortfolioResult(pd.DataFrame):
         yield self.is_first_time
 
 
-def load_portfolio(_depth: int = 0):
-    """Return the latest portfolio and cash balance."""
+def _ensure_database_ready() -> None:
+    """Initialize database connection and schema.
+    
+    Raises:
+        RepositoryError: If database initialization fails
+    """
+    from core.error_utils import log_and_raise_domain_error
+    from core.errors import RepositoryError
+    from infra.logging import get_logger
+    
+    logger = get_logger(__name__)
+    try:
+        init_db()
+    except Exception as exc:
+        log_and_raise_domain_error(
+            logger, exc, RepositoryError, "database_initialization"
+        )
 
-    empty_portfolio = pd.DataFrame(columns=ensure_schema(pd.DataFrame()).columns)
 
-    init_db()
-    with get_connection() as conn:
-        try:
-            portfolio_df = pd.read_sql_query("SELECT * FROM portfolio", conn)
-        except Exception:
-            # Fallback for tests that provide a mocked connection
-            rows = conn.execute(
-                "SELECT ticker, shares, stop_loss, buy_price, cost_basis FROM portfolio"
-            ).fetchall()
-            portfolio_df = pd.DataFrame(
-                rows, columns=["ticker", "shares", "stop_loss", "buy_price", "cost_basis"]
-            ).copy()
-        try:
-            cash_row = conn.execute("SELECT balance FROM cash WHERE id = 0").fetchone()
-        except Exception:
-            cash_row = None
-
-    if portfolio_df.empty and cash_row is None:
-        # Minimal seeding path (delegated) unless explicitly disabled
-        if is_dev_stage() and _depth == 0 and os.getenv("NO_DEV_SEED") != "1":  # pragma: no cover
-            try:
-                _seed_dev_stage_portfolio()
-            except Exception:  # pragma: no cover
-                pass
-            return load_portfolio(_depth=1)
-        return PortfolioResult(empty_portfolio, 0.0, True)
-
-    portfolio = ensure_schema(portfolio_df) if not portfolio_df.empty else empty_portfolio
-    # Attach current prices and pct_change for display/tests
-    if not portfolio.empty:
-        try:
-            prices_df = fetch_prices(portfolio[COL_TICKER].tolist())
-        except Exception:
-            prices_df = pd.DataFrame(columns=["ticker", "current_price", "pct_change"])
+def _load_portfolio_from_database() -> tuple[pd.DataFrame, float | None]:
+    """Load portfolio and cash data from database.
+    
+    Returns:
+        Tuple of (portfolio_df, cash_balance) where cash_balance is None if not found
         
+    Raises:
+        RepositoryError: If database access fails
+    """
+    from core.error_utils import log_and_raise_domain_error
+    from core.errors import RepositoryError
+    from infra.logging import get_logger
+    
+    logger = get_logger(__name__)
+    
+    try:
+        with get_connection() as conn:
+            try:
+                portfolio_df = pd.read_sql_query("SELECT * FROM portfolio", conn)
+            except Exception:
+                # Fallback for tests that provide a mocked connection
+                rows = conn.execute(
+                    "SELECT ticker, shares, stop_loss, buy_price, cost_basis FROM portfolio"
+                ).fetchall()
+                portfolio_df = pd.DataFrame(
+                    rows, columns=["ticker", "shares", "stop_loss", "buy_price", "cost_basis"]
+                ).copy()
+            
+            try:
+                cash_row = conn.execute("SELECT balance FROM cash WHERE id = 0").fetchone()
+                cash_balance = float(cash_row[0]) if cash_row is not None else None
+            except Exception:
+                cash_balance = None
+                
+        return portfolio_df, cash_balance
+        
+    except Exception as exc:
+        log_and_raise_domain_error(
+            logger, exc, RepositoryError, "portfolio_database_load"
+        )
+
+
+def _enrich_portfolio_with_current_prices(portfolio_df: pd.DataFrame) -> pd.DataFrame:
+    """Add current price and percentage change data to portfolio.
+    
+    Args:
+        portfolio_df: Portfolio DataFrame to enrich with price data
+        
+    Returns:
+        Portfolio DataFrame with current_price and pct_change columns added
+        
+    Raises:
+        MarketDataError: If price fetching fails completely
+    """
+    from core.error_utils import log_and_return_default
+    from core.errors import MarketDataError
+    from infra.logging import get_logger
+    
+    logger = get_logger(__name__)
+    
+    if portfolio_df.empty:
+        # Ensure columns exist even when empty
+        portfolio_df = portfolio_df.copy()
+        portfolio_df["current_price"] = pd.Series(dtype=float)
+        portfolio_df["pct_change"] = pd.Series(dtype=float)
+        return portfolio_df
+    
+    # Try bulk price fetch first
+    try:
+        prices_df = fetch_prices(portfolio_df[COL_TICKER].tolist())
         if not prices_df.empty:
-            portfolio = portfolio.merge(
+            portfolio_with_prices = portfolio_df.merge(
                 prices_df[["ticker", "current_price", "pct_change"]],
                 on="ticker",
                 how="left",
             )
-        else:
-            # If bulk fetch failed, try individual price lookups
-            from services.market import get_current_price
-            import logging
-            
-            logger = logging.getLogger(__name__)
-            logger.info("Bulk price fetch failed in load_portfolio, attempting individual lookups")
-            
-            current_prices = []
-            for ticker in portfolio[COL_TICKER].tolist():
-                try:
-                    price = get_current_price(ticker)
-                    current_prices.append(price if price is not None else 0.0)
-                    if price is not None:
-                        logger.info(f"Individual price loaded for {ticker}: ${price}")
-                except Exception as e:
-                    logger.warning(f"Individual price fetch failed for {ticker}: {e}")
-                    current_prices.append(0.0)
-            
-            portfolio["current_price"] = current_prices
-            portfolio["pct_change"] = 0.0
-    else:
-        # Ensure columns exist even when empty
-        portfolio["current_price"] = pd.Series(dtype=float)
-        portfolio["pct_change"] = pd.Series(dtype=float)
-    cash = 0.0
-    if cash_row is not None:
+            return portfolio_with_prices
+    except Exception as exc:
+        logger.warning("Bulk price fetch failed, attempting individual lookups", extra={
+            "operation": "bulk_price_fetch",
+            "exception_type": type(exc).__name__,
+            "exception_message": str(exc)
+        })
+    
+    # Fall back to individual price lookups
+    from services.market import get_current_price
+    
+    portfolio_with_prices = portfolio_df.copy()
+    current_prices = []
+    
+    for ticker in portfolio_df[COL_TICKER].tolist():
         try:
-            cash = float(cash_row[0])
-        except Exception:
-            cash = 0.0
-    return PortfolioResult(portfolio, cash, portfolio_df.empty)
+            price = get_current_price(ticker)
+            current_prices.append(price if price is not None else 0.0)
+            if price is not None:
+                logger.info(f"Individual price loaded for {ticker}: ${price}")
+        except Exception as exc:
+            logger.warning(f"Individual price fetch failed for {ticker}", extra={
+                "ticker": ticker,
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc)
+            })
+            current_prices.append(0.0)
+    
+    portfolio_with_prices["current_price"] = current_prices
+    portfolio_with_prices["pct_change"] = 0.0
+    return portfolio_with_prices
+
+
+def _seed_initial_portfolio_if_empty(portfolio_df: pd.DataFrame, cash_balance: float | None, depth: int) -> bool:
+    """Seed sample data if portfolio is empty and in dev stage.
+    
+    Args:
+        portfolio_df: Current portfolio DataFrame
+        cash_balance: Current cash balance (None if not set)
+        depth: Recursion depth to prevent infinite loops
+        
+    Returns:
+        True if seeding was performed, False otherwise
+        
+    Raises:
+        RepositoryError: If database seeding fails
+    """
+    from core.error_utils import log_and_return_default
+    from core.errors import RepositoryError
+    from infra.logging import get_logger
+    
+    logger = get_logger(__name__)
+    
+    if not (portfolio_df.empty and cash_balance is None):
+        return False
+        
+    if not (is_dev_stage() and depth == 0 and os.getenv("NO_DEV_SEED") != "1"):
+        return False
+    
+    try:
+        _seed_dev_stage_portfolio()
+        return True
+    except Exception as exc:
+        log_and_return_default(
+            logger, exc, False, "dev_stage_portfolio_seeding"
+        )
+        return False
+
+
+def load_portfolio(_depth: int = 0) -> PortfolioResult:
+    """Load the complete portfolio from database with current market data.
+
+    Returns a PortfolioResult containing:
+    - portfolio DataFrame with current prices and percentage changes
+    - current cash balance
+    - boolean indicating if portfolio was initially empty
+
+    Handles seeding of sample data in dev stage when portfolio is empty.
+    Gracefully handles missing market data by falling back to individual price lookups.
+    """
+
+    from core.error_utils import log_and_return_default
+    from infra.logging import get_logger
+    
+    logger = get_logger(__name__)
+    empty_portfolio = pd.DataFrame(columns=ensure_schema(pd.DataFrame()).columns)
+
+    try:
+        # Step 1: Ensure database is ready
+        _ensure_database_ready()
+        
+        # Step 2: Load existing portfolio and cash data
+        portfolio_df, cash_balance = _load_portfolio_from_database()
+        
+        # Step 3: Handle empty portfolio seeding
+        if _seed_initial_portfolio_if_empty(portfolio_df, cash_balance, _depth):
+            return load_portfolio(_depth=1)
+        
+        # Step 4: Handle truly empty portfolio
+        if portfolio_df.empty and cash_balance is None:
+            return PortfolioResult(empty_portfolio, 0.0, True)
+        
+        # Step 5: Ensure schema and enrich with current prices
+        portfolio = ensure_schema(portfolio_df) if not portfolio_df.empty else empty_portfolio
+        portfolio_with_prices = _enrich_portfolio_with_current_prices(portfolio)
+        
+        # Step 6: Prepare final result
+        final_cash = cash_balance if cash_balance is not None else 0.0
+        was_initially_empty = portfolio_df.empty
+        
+        return PortfolioResult(portfolio_with_prices, final_cash, was_initially_empty)
+        
+    except Exception as exc:
+        # Log error and return safe defaults to maintain existing API contract
+        return log_and_return_default(
+            logger, exc, PortfolioResult(empty_portfolio, 0.0, True), "load_portfolio"
+        )
 
 
 def _seed_dev_stage_portfolio() -> None:
@@ -262,169 +396,76 @@ def load_cash_balance() -> float:
 def save_portfolio_snapshot(portfolio_df: pd.DataFrame, cash: float) -> pd.DataFrame:
     """Recalculate today's portfolio values and persist them to the database.
 
-    Delegates snapshot assembly to pure compute_snapshot to keep logic consistent.
+    This function orchestrates the complete portfolio snapshot process:
+    1. Fetches current market prices for all tickers
+    2. Computes portfolio snapshot with all metrics
+    3. Persists data to database
+    4. Returns UI-friendly snapshot DataFrame
+    
+    Args:
+        portfolio_df: Current portfolio positions
+        cash: Current cash balance
+        
+    Returns:
+        Computed snapshot DataFrame with current prices and metrics
     """
-
+    # Step 1: Fetch current prices for all tickers
     tickers = portfolio_df[COL_TICKER].tolist()
+    prices = _fetch_current_prices(tickers)
     
-    # Try bulk fetch first
-    data = fetch_prices(tickers)
-    prices: dict[str, float] = {t: 0.0 for t in tickers}
+    # Step 2: Compute portfolio snapshot with current prices
+    snapshot_df = _compute_portfolio_snapshot(portfolio_df, prices, cash)
     
-    if not data.empty:
-        if isinstance(data.columns, pd.MultiIndex):
-            close = data["Close"].iloc[-1]
-            for t in tickers:
-                val = close.get(t)
-                if val is not None and not pd.isna(val):
-                    prices[t] = float(val)
-        elif set(["ticker", "current_price"]).issubset(set(data.columns)):
-            for _, r in data.iterrows():
-                cur = r.get("current_price") if hasattr(r, "get") else r["current_price"]
-                prices[str(r["ticker"])] = float(cur) if pd.notna(cur) else 0.0
-        else:
-            val = data.get("Close", pd.Series([None])).iloc[-1]
-            if tickers and not pd.isna(val):
-                prices[tickers[0]] = float(val)
+    # Step 3: Persist complete snapshot to database
+    _save_snapshot_to_database(portfolio_df, snapshot_df, cash)
     
-    # If bulk fetch failed or returned empty prices, try individual fallback
-    # Only fallback to individual lookups if bulk fetch returned data but yielded zero prices.
-    # When the bulk fetch returned an empty DataFrame (tests expect zeros without fallback)
-    # skip fallback to keep deterministic 0.0 pricing.
-    if (not data.empty) and all(price == 0.0 for price in prices.values()) and tickers:
-        from services.market import get_current_price
-        from services.manual_pricing import get_manual_price
-        import logging
+    # Return UI-friendly snapshot
+    return snapshot_df
+
+
+def _fetch_current_prices(tickers: list[str]) -> dict[str, float]:
+    """Fetch current prices for the given tickers.
+    
+    Args:
+        tickers: List of ticker symbols
         
-        logger = logging.getLogger(__name__)
-        logger.info("Bulk price fetch failed, attempting individual price lookups with manual fallback")
+    Returns:
+        Dict mapping tickers to current prices
+    """
+    from services.price_fetching import get_current_prices_for_portfolio
+    return get_current_prices_for_portfolio(tickers)
+
+
+def _compute_portfolio_snapshot(portfolio_df: pd.DataFrame, prices: dict[str, float], cash: float) -> pd.DataFrame:
+    """Compute portfolio snapshot with current prices and metrics.
+    
+    Args:
+        portfolio_df: Portfolio positions
+        prices: Current prices for tickers
+        cash: Cash balance
         
-        for ticker in tickers:
-            # First try manual pricing override
-            manual_price = get_manual_price(ticker)
-            if manual_price is not None:
-                prices[ticker] = float(manual_price)
-                logger.info(f"Using manual price for {ticker}: ${manual_price}")
-                continue
-            
-            # If no manual price, try API
-            try:
-                individual_price = get_current_price(ticker)
-                if individual_price is not None and individual_price > 0:
-                    prices[ticker] = float(individual_price)
-                    logger.info(f"Successfully fetched individual price for {ticker}: ${individual_price}")
-            except Exception as e:
-                logger.warning(f"Individual price fetch failed for {ticker}: {e}")
-                # Keep the 0.0 default
+    Returns:
+        Computed snapshot DataFrame
+    """
+    from services.data_persistence import transform_for_snapshot_input, transform_snapshot_output
+    
+    # Transform input data for compute_snapshot
+    input_df = transform_for_snapshot_input(portfolio_df)
+    
+    # Compute snapshot using pure business logic
+    raw_snapshot = _compute_snapshot(input_df, prices, cash, TODAY)
+    
+    # Transform output for UI/database compatibility
+    return transform_snapshot_output(raw_snapshot)
 
-    df = _compute_snapshot(
-        portfolio_df.rename(
-            columns={
-                COL_TICKER: "ticker",
-                COL_SHARES: "shares",
-                COL_STOP: "stop_loss",
-                COL_PRICE: "buy_price",
-                COL_COST: "cost_basis",
-            }
-        ),
-        prices,
-        cash,
-        TODAY,
-    )
 
-    # Create a lower-case version for DB insertion and returning to UI
-    df = df.rename(
-        columns={
-            "Date": "date",
-            "Ticker": "ticker",
-            "Shares": "shares",
-            "Cost Basis": "cost_basis",
-            "Stop Loss": "stop_loss",
-            "Current Price": "current_price",
-            "Total Value": "total_value",
-            "PnL": "pnl",
-            "Action": "action",
-            "Price Source": "price_source",
-            "Cash Balance": "cash_balance",
-            "Total Equity": "total_equity",
-        }
-    )
-
-    # Prepare DB-aligned DataFrame (subset to schema columns only)
-    df_db = df[
-        [
-            "date",
-            "ticker",
-            "shares",
-            "cost_basis",
-            "stop_loss",
-            "current_price",
-            "total_value",
-            "pnl",
-            "action",
-            "cash_balance",
-            "total_equity",
-        ]
-    ]
-
-    init_db()
-    with get_connection() as conn:
-        # Update current holdings
-        conn.execute("DELETE FROM portfolio")
-        if not portfolio_df.empty:
-            core_columns = ["ticker", "shares", "stop_loss", "buy_price", "cost_basis"]
-            available_columns = [col for col in core_columns if col in portfolio_df.columns]
-            if available_columns:
-                # Use executemany to avoid reliance on pandas.to_sql when using mocks
-                insert_sql = "INSERT INTO portfolio (ticker, shares, stop_loss, buy_price, cost_basis) VALUES (?, ?, ?, ?, ?)"
-                rows = (
-                    portfolio_df.reindex(columns=core_columns)
-                    .fillna(0)
-                    .apply(
-                        lambda r: (
-                            r["ticker"],
-                            float(r["shares"]),
-                            float(r["stop_loss"]),
-                            float(r["buy_price"]),
-                            float(r["cost_basis"]),
-                        ),
-                        axis=1,
-                    )
-                    .tolist()
-                )
-                for row in rows:
-                    conn.execute(insert_sql, row)
-
-        # Update cash balance (single row table)
-        conn.execute("INSERT OR REPLACE INTO cash (id, balance) VALUES (0, ?)", (float(cash),))
-
-        # Store daily snapshot for the day using pandas to_sql so tests can patch it
-        conn.execute("DELETE FROM portfolio_history WHERE date = ?", (TODAY,))
-        try:
-            df.to_sql("portfolio_history", conn, if_exists="append", index=False)
-        except Exception:
-            # Fallback to manual inserts when working with mocked connections
-            insert_hist = (
-                "INSERT INTO portfolio_history (date, ticker, shares, cost_basis, stop_loss, current_price, total_value, pnl, action, cash_balance, total_equity) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            )
-            for _, r in df.iterrows():
-                conn.execute(
-                    insert_hist,
-                    (
-                        r["date"],
-                        r["ticker"],
-                        float(r["shares"]) if r["shares"] != "" else 0.0,
-                        float(r["cost_basis"]) if r["cost_basis"] != "" else 0.0,
-                        float(r["stop_loss"]) if r["stop_loss"] != "" else 0.0,
-                        float(r["current_price"]) if r["current_price"] != "" else 0.0,
-                        float(r["total_value"]) if r["total_value"] != "" else 0.0,
-                        float(r["pnl"]) if r["pnl"] != "" else 0.0,
-                        r["action"],
-                        float(r["cash_balance"]) if r["cash_balance"] != "" else 0.0,
-                        float(r["total_equity"]) if r["total_equity"] != "" else 0.0,
-                    ),
-                )
-
-    # Return the UI-friendly DataFrame (lowercase keys plus price_source)
-    return df
+def _save_snapshot_to_database(portfolio_df: pd.DataFrame, snapshot_df: pd.DataFrame, cash: float) -> None:
+    """Save complete portfolio snapshot to database.
+    
+    Args:
+        portfolio_df: Current portfolio positions
+        snapshot_df: Computed snapshot
+        cash: Cash balance
+    """
+    from services.data_persistence import save_portfolio_data
+    save_portfolio_data(portfolio_df, snapshot_df, cash)

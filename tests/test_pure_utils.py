@@ -20,3 +20,10 @@ def test_validate_buy_price():
     assert bad.valid is False and "range" in bad.reason
     no_bounds = validate_buy_price(10, None, None)
     assert no_bounds.valid is True
+    stale = validate_buy_price(0.25, 25, 27)
+    assert stale.valid is True and stale.reason
+
+
+def test_validate_buy_price_tolerance():
+    near_edge = validate_buy_price(105, 100, 104)
+    assert near_edge.valid is True

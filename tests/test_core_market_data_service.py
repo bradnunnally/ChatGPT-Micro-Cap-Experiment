@@ -127,3 +127,46 @@ def test_market_data_service_daily_cache_rollover(tmp_path):
     # Record success resets breaker
     mds._record_success(ticker, 99.9)
     assert mds._circuit[ticker].failures == 0
+
+
+def test_market_data_service_disk_cache_debounced(monkeypatch, tmp_path):
+    provider = DummyPriceProvider(price=50)
+    mds = MarketDataService(price_provider=provider, disk_flush_interval=10.0, disk_flush_batch=3)
+
+    mds._disk_cache_dir = tmp_path
+    mds._disk_cache_day = "2099-01-01"
+    mds._disk_cache_path = tmp_path / "2099-01-01.json"
+    mds._daily_disk_cache = {}
+
+    save_calls: list[float] = []
+    original_save = MarketDataService._save_disk_cache
+
+    def tracked_save(self: MarketDataService) -> None:
+        save_calls.append(self._now())
+        original_save(self)
+
+    monkeypatch.setattr(MarketDataService, "_save_disk_cache", tracked_save)
+
+    current_time = 1_000.0
+    mds._now = lambda: current_time  # type: ignore[assignment]
+    mds._last_disk_flush = current_time
+
+    mds._record_success("AAA", 1.0)
+    assert save_calls == []
+
+    mds._record_success("BBB", 2.0)
+    assert save_calls == []
+
+    mds._record_success("CCC", 3.0)
+    assert len(save_calls) == 1
+
+    assert not mds._disk_cache_dirty
+    assert mds._pending_disk_writes == 0
+
+    current_time += 1
+    mds._record_success("DDD", 4.0)
+    assert len(save_calls) == 1
+
+    current_time += 11
+    mds._flush_disk_cache_if_needed()
+    assert len(save_calls) == 2

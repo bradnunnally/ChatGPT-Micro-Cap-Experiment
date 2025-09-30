@@ -1,4 +1,5 @@
 from decimal import Decimal, InvalidOperation
+from typing import Callable, Optional
 
 import streamlit as st
 
@@ -102,7 +103,10 @@ def _render_feedback() -> None:
         st.error(msg, icon="⚠️")
 
 
-def show_buy_form(ticker_default: str = "") -> None:
+def show_buy_form(
+    ticker_default: str = "",
+    on_success: Optional[Callable[[str], None]] = None,
+) -> None:
     """Render and process the buy form inside an expander.
 
     Parameters
@@ -148,6 +152,8 @@ def show_buy_form(ticker_default: str = "") -> None:
                 st.session_state.pop("b_price", None)
                 st.session_state.pop("b_stop_pct", None)
                 st.session_state.buy_form_open = False
+                if on_success:
+                    on_success(ticker)
             else:
                 st.session_state.feedback = ("error", msg)
         except (ValueError, InvalidOperation, _ValidationError) as e:
@@ -237,6 +243,14 @@ def show_sell_form() -> None:
             _validate_shares(shares)
             _validate_price(price_dec)
 
+            owned_total = float(st.session_state.get("s_owned_total", 0.0))
+            if shares > owned_total + 1e-9:
+                st.session_state.feedback = (
+                    "error",
+                    f"Cannot sell {shares} shares of {ticker}; only {owned_total:g} available.",
+                )
+                return
+
             ok, msg, port, cash = manual_sell(
                 ticker,
                 shares,
@@ -310,16 +324,18 @@ def show_sell_form() -> None:
                 st.rerun()
             return
 
-        max_shares = int(matching.iloc[0][COL_SHARES])
+        owned_shares = float(matching[COL_SHARES].astype(float).sum())
+        max_shares = int(owned_shares)
+        st.session_state.s_owned_total = owned_shares
         latest_price = float(matching.iloc[0][COL_PRICE])
         fetched_price = fetch_price(selected)
         price_default = fetched_price if fetched_price is not None else latest_price
 
         # Determine min/default values
-        share_min = 1 if max_shares > 0 else 0
-        share_default = 1 if max_shares > 0 else 0
+        share_min = 1 if owned_shares > 0 else 0
+        share_default = max_shares if max_shares > 0 else 1
 
-        if max_shares == 0:
+        if max_shares <= 0:
             st.info("You have no shares to sell for this ticker.")
             if st.button("Close", key="close_sell_form4", type="secondary"):
                 st.session_state.sell_form_open = False
@@ -331,13 +347,16 @@ def show_sell_form() -> None:
 
         # Now render the form with the dynamic fields
         with st.form("sell_form", clear_on_submit=True):
-            st.write(f"**Selling {selected}** (You own {max_shares} shares)")
+            st.write(
+                f"**Selling {selected}** (You own {int(owned_shares) if owned_shares.is_integer() else round(owned_shares, 4)} shares)"
+            )
+            st.caption("Enter the number of shares to sell; the trade will fail if you exceed holdings.")
 
             st.number_input(
                 "Shares to sell",
                 min_value=share_min,
                 value=share_default,
-                max_value=max_shares,
+                max_value=max_shares if max_shares > 0 else 1,
                 step=1,
                 key="s_shares",
             )

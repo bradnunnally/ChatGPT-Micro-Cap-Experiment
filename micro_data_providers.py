@@ -13,6 +13,8 @@ Network calls are contained only within FinnhubDataProvider.
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+from core.retry import retry_with_exception_propagation
 from typing import Protocol, Tuple, Optional, List, Dict, Any
 import time
 import json
@@ -222,28 +224,14 @@ class FinnhubDataProvider:
 
     def _call(self, func, *args, attempts: int = 3, base_delay: float = 0.5, **kwargs):
         """Call finnhub SDK function with retry on HTTP 429 and transient errors."""
-        last_err: Optional[Exception] = None
-        for i in range(attempts):
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:  # Inspect for 429 if available
-                msg = str(e)
-                last_err = e
-                # crude 429 detection across SDK/requests variations
-                is_429 = "429" in msg or "Too Many Requests" in msg
-                is_403 = "403" in msg or "access" in msg.lower()
-                # Do not retry permission errors (403)
-                if is_403:
-                    break
-                if not is_429 and i == attempts - 1:
-                    break
-                # backoff with jitter
-                delay = base_delay * (2 ** i) * (1 + random.uniform(-0.2, 0.2))
-                print(f"[finnhub] rate limited, retrying in {delay:.2f}s...")
-                time.sleep(max(0.1, delay))
-        if last_err:
-            raise last_err
-        raise RuntimeError("Finnhub call failed")
+        return retry_with_exception_propagation(
+            lambda: func(*args, **kwargs),
+            attempts=attempts,
+            base_delay=base_delay,
+            jitter=True,
+            jitter_range=0.2,
+            retry_on_403=False
+        )
 
     # ------------------------------ cache keys --------------------------------
     def _quote_path(self, ticker: str) -> Path:
@@ -269,17 +257,27 @@ class FinnhubDataProvider:
         path = self._quote_path(ticker)
         if _is_fresh(path, self.quote_ttl_s):
             data = _read_json(path) or {}
-            logger.debug("cache_hit quote %s", ticker)
-            return data
+            if data.get("price") is not None:
+                logger.debug("cache_hit quote %s", ticker)
+                return data
+            logger.debug("cache_stale quote %s", ticker)
         logger.debug("cache_miss quote %s", ticker)
         client = self._client_get()
         data = self._call(client.quote, ticker)
-        # Finnhub quote fields: c (current), pc (prev close)
+        # Finnhub quote fields: c (current), pc (prev close), h (day high), l (day low)
         price = data.get("c")
         prev = data.get("pc") or 0
         change = (price - prev) if (price is not None and prev) else None
         percent = (change / prev * 100.0) if (change is not None and prev) else None
-        mapped = {"price": price, "change": change, "percent": percent}
+        mapped = {
+            "price": price,
+            "change": change,
+            "percent": percent,
+            "day_high": data.get("h"),
+            "day_low": data.get("l"),
+            "open": data.get("o"),
+            "prev_close": data.get("pc"),
+        }
         _write_json(path, mapped)
         return mapped
 

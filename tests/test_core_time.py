@@ -37,3 +37,10 @@ def test_trading_calendar_market_open():
     assert cal.is_market_open(dt)
     dt = datetime(2025, 8, 11, 8, 0, tzinfo=c.tz)
     assert not cal.is_market_open(dt)
+
+
+def test_next_trading_day_skips_holidays():
+    c = Clock()
+    cal = TradingCalendar(clock=c, holidays={"2025-08-11"})
+    start = date(2025, 8, 8)  # Friday
+    assert cal.next_trading_day(start) == date(2025, 8, 12)

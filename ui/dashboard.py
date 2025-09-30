@@ -10,12 +10,14 @@ from core.errors import ValidationError
 from data.portfolio import save_portfolio_snapshot
 from services.core.market_service import MarketService
 from services.core.portfolio_service import PortfolioService
+from services import market as market_module
 from services.session import init_session_state
 from services.time import TradingCalendar, get_clock
 from ui.cash import show_cash_section
 from ui.forms import show_buy_form, show_sell_form
 from ui.manual_pricing import show_manual_pricing_section, show_api_status_warning
-from ui.summary import build_daily_summary, render_daily_portfolio_summary
+from ui.summary import render_daily_portfolio_summary
+from utils.cache import get_cache_stats, clear_cache
 
 
 def fmt_currency(val: float) -> str:
@@ -96,6 +98,18 @@ def highlight_pct(val) -> str:
         return ""
 
 
+def _sync_micro_env(enabled: bool) -> None:
+    """Align environment flag so backend toggles match UI preference."""
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    if enabled:
+        os.environ["ENABLE_MICRO_PROVIDERS"] = "1"
+        os.environ.pop("DISABLE_MICRO_PROVIDERS", None)
+    else:
+        os.environ["ENABLE_MICRO_PROVIDERS"] = "0"
+        os.environ["DISABLE_MICRO_PROVIDERS"] = "1"
+
+
 def initialize_services():
     """Initialize services in session state."""
     if "portfolio_service" not in st.session_state:
@@ -104,9 +118,19 @@ def initialize_services():
         st.session_state.market_service = MarketService()
         # cache flag for micro provider use
         if "use_micro_providers" not in st.session_state:
-            st.session_state.use_micro_providers = bool(
-                os.getenv("ENABLE_MICRO_PROVIDERS") == "1" or os.getenv("APP_USE_FINNHUB") == "1"
-            )
+            truthy = {"1", "true", "yes", "on"}
+            flag = (os.getenv("ENABLE_MICRO_PROVIDERS") or "").strip().lower()
+            override = (os.getenv("APP_USE_FINNHUB") or "").strip().lower()
+            app_env = (os.getenv("APP_ENV") or "production").strip().lower()
+            finnhub_key = (os.getenv("FINNHUB_API_KEY") or "").strip()
+            disable_flag = (os.getenv("DISABLE_MICRO_PROVIDERS") or "").strip()
+            default_use = flag in truthy or override in truthy
+            if disable_flag == "1":
+                default_use = False
+            if not default_use and app_env == "production" and finnhub_key:
+                default_use = True
+            st.session_state.use_micro_providers = default_use
+            _sync_micro_env(default_use)
 
 
 def render_dashboard() -> None:
@@ -261,35 +285,59 @@ def render_dashboard() -> None:
                 st.warning(f"Closed — opens {_fmt(next_open_dt)} ET {day_label}")
 
             # --- Provider Mode + Caption (always shown) ---
-            app_env = os.getenv("APP_ENV", "production")
-            if app_env != "production":
-                st.caption("Provider Mode")
-                toggled = st.toggle(
-                    "Use micro providers (Finnhub/Synthetic)",
-                    value=st.session_state.get("use_micro_providers", False),
-                    help="When enabled and FINNHUB_API_KEY set (production), uses Finnhub; in dev uses synthetic.",
-                )
+            app_env = (os.getenv("APP_ENV") or "production").strip().lower()
+            finnhub_key = (os.getenv("FINNHUB_API_KEY") or "").strip()
+            st.caption("Provider Mode")
+            toggle_disabled = app_env == "production" and not finnhub_key
+            toggled = st.toggle(
+                "Use micro providers (Finnhub/Synthetic)",
+                value=st.session_state.get("use_micro_providers", False),
+                disabled=toggle_disabled,
+                help=(
+                    "Enable to use Finnhub live data when an API key is configured."
+                    if app_env == "production"
+                    else "Enable to use deterministic synthetic market data."
+                ),
+            )
+            previous_state = st.session_state.get("use_micro_providers", False)
+            if toggled != previous_state:
                 st.session_state.use_micro_providers = toggled
+                _sync_micro_env(toggled)
+                try:
+                    market_module._micro_provider_cache = None  # type: ignore[attr-defined]
+                    market_module._get_direct_finnhub_provider.cache_clear()
+                except Exception:
+                    pass
 
             # Decide caption text
             caption_txt = "Provider: "
-            
-            # In production mode, use micro providers if FINNHUB_API_KEY is set
             use_micro = st.session_state.get("use_micro_providers", False)
             if app_env == "production":
-                # In production, automatically use Finnhub if API key is available
-                finnhub_key = os.getenv("FINNHUB_API_KEY", "").strip()
-                if finnhub_key:
+                if not finnhub_key:
+                    caption_txt += "Finnhub unavailable (missing API key)"
+                elif use_micro:
                     caption_txt += "Finnhub (Production)"
                 else:
-                    caption_txt += "Disabled (No API Key)"
+                    caption_txt += "Disabled (manual/offline)"
             else:
-                # In dev/other modes, respect the toggle
-                if use_micro:
-                    caption_txt += "Synthetic (Development)"
-                else:
-                    caption_txt += "Disabled (fallback only)"
+                caption_txt += "Synthetic (Development)" if use_micro else "Disabled (fallback only)"
             st.caption(caption_txt)
+
+            # Cache statistics
+            try:
+                cache_stats = get_cache_stats()
+                price_hit_rate = cache_stats["price_cache"]["hit_rate"]
+                history_hit_rate = cache_stats["history_cache"]["hit_rate"]
+                st.caption(f"Cache Hit Rate: Price {price_hit_rate:.1%} | History {history_hit_rate:.1%}")
+                
+                # Cache clear button (in expander to save space)
+                with st.expander("Cache Controls", expanded=False):
+                    if st.button("Clear Cache", help="Clear all cached market data"):
+                        clear_cache()
+                        st.success("Cache cleared successfully")
+                        st.rerun()
+            except Exception:
+                pass  # Silently ignore cache stats errors
 
         port_table = summary_df[summary_df["Ticker"] != "TOTAL"].copy()
         # Drop legacy cash/equity columns from per-position display
@@ -522,6 +570,8 @@ def render_dashboard() -> None:
                     "asOfDate": datetime.now().strftime("%Y-%m-%d"),
                     "cashBalance": cash_balance,
                     "holdings": holdings_payload,
+                    "summaryFrame": summary_df.copy(),
+                    "history": history.copy(),
                     "notes": {"materialNewsToday": "N/A", "catalystNotes": []},
                 }
                 st.session_state.daily_summary = render_daily_portfolio_summary(payload)

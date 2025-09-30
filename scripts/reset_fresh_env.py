@@ -28,7 +28,8 @@ def reset(empty_cash: bool = True) -> None:
     try:
         cur = conn.cursor()
         # Wipe relevant tables
-        for table in ("portfolio", "cash", "trade_log", "portfolio_history"):
+        from core.constants import ALL_MAIN_TABLES
+        for table in ALL_MAIN_TABLES:
             try:
                 cur.execute(f"DELETE FROM {table}")
             except Exception as e:  # pragma: no cover

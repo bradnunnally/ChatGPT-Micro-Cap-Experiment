@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-import zoneinfo
+try:
+    import zoneinfo
+except ImportError as exc:  # pragma: no cover - requires Python < 3.9
+    raise RuntimeError("zoneinfo module is required for Clock timezone support") from exc
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
@@ -79,6 +82,6 @@ class TradingCalendar:
     def next_trading_day(self, d: Optional[date] = None) -> date:
         d = d or self.clock.today()
         nxt = d + timedelta(days=1)
-        while nxt.weekday() >= 5:  # skip Sat/Sun
+        while not self.is_trading_day(nxt):
             nxt += timedelta(days=1)
         return nxt
