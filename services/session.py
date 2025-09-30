@@ -28,12 +28,26 @@ def init_session_state() -> None:
     }.items():
         st.session_state.setdefault(key, default)
 
-    # Load portfolio and cash from database on startup
+    # Load portfolio and cash from database on startup with portfolio context
     if "portfolio" not in st.session_state or "cash" not in st.session_state:
+        from services.portfolio_service import ensure_portfolio_context_in_queries
+        
+        # Ensure we have a current portfolio context
+        current_portfolio_id = ensure_portfolio_context_in_queries()
+        
+        # Load portfolio using the current context
         portfolio_df, cash_amount, needs_cash = load_portfolio()
-        st.session_state.portfolio = portfolio_df
-        st.session_state.cash = cash_amount
-        st.session_state.needs_cash = needs_cash
+        
+        # If we have valid data, use it; otherwise mark as needing initialization
+        if not portfolio_df.empty or cash_amount > 0:
+            st.session_state.portfolio = portfolio_df
+            st.session_state.cash = cash_amount
+            st.session_state.needs_cash = False  # We have data, no need to initialize
+        else:
+            # No data found - this should trigger the initialization flow
+            st.session_state.portfolio = portfolio_df  # Empty dataframe
+            st.session_state.cash = cash_amount if cash_amount is not None else 0.0
+            st.session_state.needs_cash = needs_cash
 
     # Initialize a repository instance for persistence if not present
     if "repo" not in st.session_state:

@@ -117,13 +117,10 @@ def navbar(active_page: str) -> None:
         unsafe_allow_html=True,
     )
 
-    header_cols = st.columns([4, 2, 1])
+    header_cols = st.columns([5, 1])
     with header_cols[0]:
         st.title("AI Assisted Trading")
     with header_cols[1]:
-        # Portfolio selector
-        _render_portfolio_selector()
-    with header_cols[2]:
         quit_key = f"quit_app_{Path(active_page).stem}" if active_page else "quit_app"
         if st.button("Quit App", key=quit_key, type="secondary"):
             _shutdown_server()
@@ -142,7 +139,10 @@ def navbar(active_page: str) -> None:
             f"""
             <div class="nav-container">
                 <a class="nav-link {'active' if active_page == Path('app.py').name else ''}" href="/" target="_self">Dashboard</a>
+                <a class="nav-link {'active' if active_page == Path('pages/portfolio_management.py').name else ''}" href="/portfolio_management" target="_self">Portfolios</a>
                 <a class="nav-link {'active' if active_page == Path('pages/performance_page.py').name else ''}" href="/performance_page" target="_self">Performance</a>
+                <a class="nav-link {'active' if active_page == Path('pages/enhanced_analytics.py').name else ''}" href="/enhanced_analytics" target="_self">Analytics</a>
+                <a class="nav-link {'active' if active_page == Path('pages/data_migration.py').name else ''}" href="/data_migration" target="_self">Import/Export</a>
                 <a class="nav-link {'active' if active_page == Path('pages/user_guide_page.py').name else ''}" href="/user_guide_page" target="_self">User Guide</a>
                 <a class="nav-link {'active' if active_page == Path('pages/watchlist.py').name else ''}" href="/watchlist" target="_self">Watchlist</a>
                 {csv_link}

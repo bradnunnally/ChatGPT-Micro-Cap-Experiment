@@ -487,3 +487,47 @@ def _save_snapshot_to_database(portfolio_df: pd.DataFrame, snapshot_df: pd.DataF
     """
     from services.data_persistence import save_portfolio_data
     save_portfolio_data(portfolio_df, snapshot_df, cash)
+
+
+def load_portfolio_for_id(portfolio_id: int) -> tuple[pd.DataFrame, float]:
+    """Load portfolio data for a specific portfolio ID.
+    
+    Args:
+        portfolio_id: The portfolio ID to load
+        
+    Returns:
+        Tuple of (portfolio_df, cash_balance)
+    """
+    try:
+        _ensure_database_ready()
+        
+        with get_connection() as conn:
+            # Load portfolio positions for the specific portfolio
+            portfolio_query = """
+                SELECT ticker, shares, stop_loss, buy_price, cost_basis 
+                FROM portfolio 
+                WHERE portfolio_id = ?
+            """
+            portfolio_df = pd.read_sql_query(portfolio_query, conn, params=(portfolio_id,))
+            
+            # Load cash balance for the specific portfolio
+            cash_query = "SELECT balance FROM cash WHERE portfolio_id = ?"
+            cash_result = conn.execute(cash_query, (portfolio_id,)).fetchone()
+            cash_balance = cash_result[0] if cash_result else 0.0
+            
+            # Ensure schema and enrich with current prices if not empty
+            if not portfolio_df.empty:
+                portfolio_df = ensure_schema(portfolio_df)
+                portfolio_df = _enrich_portfolio_with_current_prices(portfolio_df)
+            else:
+                portfolio_df = pd.DataFrame(columns=ensure_schema(pd.DataFrame()).columns)
+            
+            return portfolio_df, cash_balance
+            
+    except Exception as e:
+        from infra.logging import get_logger
+        logger = get_logger(__name__)
+        logger.warning(f"Failed to load portfolio for ID {portfolio_id}: {e}")
+        # Return empty portfolio on error
+        empty_df = pd.DataFrame(columns=ensure_schema(pd.DataFrame()).columns)
+        return empty_df, 0.0

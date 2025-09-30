@@ -35,16 +35,40 @@ class PortfolioService:
         return self.repository.get_portfolio_by_id(current_id)
     
     def set_current_portfolio(self, portfolio_id: int) -> bool:
-        """Set the currently selected portfolio."""
+        """Set the currently selected portfolio and reload session data."""
         portfolio = self.repository.get_portfolio_by_id(portfolio_id)
         if portfolio and portfolio.is_active:
             self._set_session_portfolio_id(portfolio_id)
+            
+            # Reload portfolio data from database for the new portfolio
+            self._reload_portfolio_session_data(portfolio_id)
+            
             logger.info(f"Switched to portfolio: {portfolio.name}", extra={
                 "portfolio_id": portfolio_id,
                 "portfolio_name": portfolio.name
             })
             return True
         return False
+    
+    def _reload_portfolio_session_data(self, portfolio_id: int) -> None:
+        """Reload session state portfolio data for the specified portfolio."""
+        try:
+            import streamlit as st
+            from data.portfolio import load_portfolio_for_id
+            
+            # Load portfolio-specific data
+            portfolio_df, cash_balance = load_portfolio_for_id(portfolio_id)
+            
+            # Update session state
+            st.session_state.portfolio = portfolio_df
+            st.session_state.cash = cash_balance
+            
+        except Exception as e:
+            logger.warning(f"Failed to reload portfolio data: {e}")
+            # Fall back to clearing session state to force reload
+            if hasattr(st, 'session_state'):
+                for key in ['portfolio', 'cash']:
+                    st.session_state.pop(key, None)
     
     def create_new_portfolio(
         self, 

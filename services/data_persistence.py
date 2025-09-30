@@ -43,8 +43,12 @@ class PortfolioPersistenceService:
             conn: Database connection
             portfolio_df: DataFrame with current positions
         """
-        # Clear existing positions
-        conn.execute("DELETE FROM portfolio")
+        # Get current portfolio ID from session context
+        from services.portfolio_service import ensure_portfolio_context_in_queries
+        current_portfolio_id = ensure_portfolio_context_in_queries()
+        
+        # Clear existing positions for current portfolio only
+        conn.execute("DELETE FROM portfolio WHERE portfolio_id = ?", (current_portfolio_id,))
         
         if portfolio_df.empty:
             logger.debug("No positions to save")
@@ -59,9 +63,9 @@ class PortfolioPersistenceService:
             return
             
         # Convert DataFrame to insertion format
-        insert_sql = "INSERT INTO portfolio (ticker, shares, stop_loss, buy_price, cost_basis) VALUES (?, ?, ?, ?, ?)"
+        insert_sql = "INSERT INTO portfolio (ticker, shares, stop_loss, buy_price, cost_basis, portfolio_id) VALUES (?, ?, ?, ?, ?, ?)"
         
-        rows = self._prepare_portfolio_rows(portfolio_df, core_columns)
+        rows = self._prepare_portfolio_rows(portfolio_df, core_columns, current_portfolio_id)
         
         # Execute batch insert
         for row in rows:
@@ -69,12 +73,13 @@ class PortfolioPersistenceService:
             
         logger.debug(f"Saved {len(rows)} portfolio positions")
     
-    def _prepare_portfolio_rows(self, portfolio_df: pd.DataFrame, core_columns: List[str]) -> List[Tuple]:
+    def _prepare_portfolio_rows(self, portfolio_df: pd.DataFrame, core_columns: List[str], portfolio_id: int) -> List[Tuple]:
         """Prepare portfolio data for database insertion.
         
         Args:
             portfolio_df: Portfolio DataFrame
             core_columns: Required column names
+            portfolio_id: ID of the portfolio to save to
             
         Returns:
             List of tuples ready for database insertion
@@ -90,6 +95,7 @@ class PortfolioPersistenceService:
                         float(r["stop_loss"]),
                         float(r["buy_price"]),
                         float(r["cost_basis"]),
+                        portfolio_id,
                     ),
                     axis=1,
                 )
@@ -106,8 +112,12 @@ class PortfolioPersistenceService:
             conn: Database connection
             cash: Cash balance
         """
-        conn.execute("INSERT OR REPLACE INTO cash (id, balance) VALUES (0, ?)", (float(cash),))
-        logger.debug(f"Saved cash balance: ${cash:.2f}")
+        # Get current portfolio ID from session context
+        from services.portfolio_service import ensure_portfolio_context_in_queries
+        current_portfolio_id = ensure_portfolio_context_in_queries()
+        
+        conn.execute("INSERT OR REPLACE INTO cash (portfolio_id, balance) VALUES (?, ?)", (current_portfolio_id, float(cash)))
+        logger.debug(f"Saved cash balance: ${cash:.2f} for portfolio {current_portfolio_id}")
     
     def _save_daily_history(self, conn, snapshot_df: pd.DataFrame) -> None:
         """Save daily portfolio history snapshot.

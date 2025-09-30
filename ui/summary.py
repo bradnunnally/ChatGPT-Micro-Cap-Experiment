@@ -8,6 +8,7 @@ import pandas as pd
 
 from config.summary_config import get_config, set_config, SummaryConfig
 from services.core.market_service import MarketService
+from services.enhanced_summary import EnhancedSummaryService
 from utils.cache import get_cached_price_data, get_cached_price_history, warm_cache_for_symbols, COMMON_SYMBOLS
 from utils.error_handling import (
     handle_summary_errors, 
@@ -677,6 +678,21 @@ def render_daily_portfolio_summary(data: Dict[str, Any], config: Optional[Summar
         # Assemble report lines
         separator = "=" * 64
         lines: List[str] = [separator, f"Daily Results — {as_of_display}", separator, ""]
+        
+        # Add portfolio context if available
+        portfolio_info = data.get("portfolio", {})
+        if portfolio_info:
+            portfolio_name = portfolio_info.get("name", "Unknown Portfolio")
+            strategy = portfolio_info.get("strategy", "N/A")
+            benchmark = portfolio_info.get("benchmark_symbol", "N/A")
+            
+            lines.append(f"Portfolio: {portfolio_name}")
+            lines.append(f"Strategy: {strategy} | Benchmark: {benchmark}")
+            
+            description = portfolio_info.get("description", "").strip()
+            if description:
+                lines.append(f"Notes: {description}")
+            lines.append("")
 
         # Price & Volume section
         lines.extend(_format_price_volume_section(price_rows))
@@ -785,7 +801,34 @@ def render_daily_portfolio_summary(data: Dict[str, Any], config: Optional[Summar
         lines.append("")
         lines.extend(_format_instructions_section())
 
-        return "\n".join(lines)
+        # Generate base summary
+        base_summary = "\n".join(lines)
+        
+        # Enhance with portfolio-specific instructions if portfolio context is available
+        portfolio_info = data.get("portfolio", {})
+        if portfolio_info and portfolio_info.get("strategy_type"):
+            enhanced_summary_service = EnhancedSummaryService()
+            
+            # Get analytics data if available (from enhanced analytics service)
+            analytics_data = {}
+            try:
+                from services.enhanced_analytics import EnhancedAnalyticsService
+                analytics_service = EnhancedAnalyticsService()
+                portfolio_id = portfolio_info.get("id")
+                if portfolio_id:
+                    portfolio_analytics = analytics_service.get_portfolio_analytics(portfolio_id)
+                    analytics_data = {
+                        "volatility": f"{portfolio_analytics.volatility:.1f}" if portfolio_analytics.volatility else "N/A",
+                        "sharpe_ratio": f"{portfolio_analytics.sharpe_ratio:.2f}" if portfolio_analytics.sharpe_ratio else "N/A",
+                        "max_drawdown": f"{portfolio_analytics.max_drawdown:.1f}" if portfolio_analytics.max_drawdown else "N/A"
+                    }
+            except Exception:
+                # If analytics service fails, continue without analytics data
+                pass
+            
+            return enhanced_summary_service.enhance_existing_summary(base_summary, portfolio_info, analytics_data)
+        
+        return base_summary
     except Exception as e:  # pragma: no cover - defensive
         return f"Error rendering daily portfolio summary: {e}"
     finally:

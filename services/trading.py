@@ -65,6 +65,7 @@ def manual_buy(
     portfolio_df: pd.DataFrame | None = None,
     cash: float | None = None,
     repo: Optional[PortfolioRepository] | None = None,
+    portfolio_id: int = 1,
 ) -> bool | tuple[bool, str, pd.DataFrame, float]:
     """Execute a manual buy and update portfolio and logs.
 
@@ -141,6 +142,7 @@ def manual_buy(
             "Cost Basis": cost,
             "PnL": 0.0,
             "Reason": "MANUAL BUY - New position",
+            "portfolio_id": portfolio_id,
         }
         if repo is not None:
             from core.trading_error_utils import safe_repository_operation
@@ -190,6 +192,7 @@ def manual_sell(
     portfolio_df: pd.DataFrame | None = None,
     cash: float | None = None,
     repo: Optional[PortfolioRepository] | None = None,
+    portfolio_id: int = 1,
 ) -> bool | tuple[bool, str, pd.DataFrame, float]:
     """Execute a manual sell and update portfolio and logs.
 
@@ -293,6 +296,7 @@ def manual_sell(
             "Reason": "MANUAL SELL - User",
             "Shares Sold": shares,
             "Sell Price": price,
+            "portfolio_id": portfolio_id,
         }
         if repo is not None:
             try:

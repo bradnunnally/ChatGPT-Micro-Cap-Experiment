@@ -134,6 +134,15 @@ def show_buy_form(
                 # Validate stop only if set
                 _validate_price(Decimal(str(stop_loss)))
 
+            # Get current portfolio context for trade
+            from services.portfolio_service import PortfolioService
+            portfolio_service = PortfolioService()
+            try:
+                current_portfolio = portfolio_service.get_current_portfolio()
+                portfolio_id = current_portfolio.id
+            except Exception:
+                portfolio_id = 1  # Fallback for backward compatibility
+
             ok, msg, port, cash = manual_buy(
                 ticker,
                 shares,
@@ -142,6 +151,7 @@ def show_buy_form(
                 st.session_state.portfolio,
                 st.session_state.cash,
                 repo=st.session_state.get("repo"),
+                portfolio_id=portfolio_id,
             )
             if ok:
                 st.session_state.portfolio = port
@@ -251,6 +261,15 @@ def show_sell_form() -> None:
                 )
                 return
 
+            # Get current portfolio context for trade
+            from services.portfolio_service import PortfolioService
+            portfolio_service = PortfolioService()
+            try:
+                current_portfolio = portfolio_service.get_current_portfolio()
+                portfolio_id = current_portfolio.id
+            except Exception:
+                portfolio_id = 1  # Fallback for backward compatibility
+
             ok, msg, port, cash = manual_sell(
                 ticker,
                 shares,
@@ -258,6 +277,7 @@ def show_sell_form() -> None:
                 st.session_state.portfolio,
                 st.session_state.cash,
                 repo=st.session_state.get("repo"),
+                portfolio_id=portfolio_id,
             )
             if ok:
                 st.session_state.portfolio = port

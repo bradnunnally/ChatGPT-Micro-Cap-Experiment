@@ -115,6 +115,8 @@ def create_performance_chart(hist_filtered: pd.DataFrame) -> tuple[go.Figure, di
         yaxis_title="Value ($)",
         hovermode="x unified",
         showlegend=False,  # Hide the default legend
+        plot_bgcolor="rgba(0,0,0,0)",  # Transparent plot background
+        paper_bgcolor="rgba(0,0,0,0)",  # Transparent paper background
     )
     return fig, legend_info
 

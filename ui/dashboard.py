@@ -20,6 +20,84 @@ from ui.summary import render_daily_portfolio_summary
 from utils.cache import get_cache_stats, clear_cache
 
 
+def _render_portfolio_context() -> None:
+    """Render current portfolio context information."""
+    try:
+        from services.portfolio_service import portfolio_service
+        
+        current_portfolio = portfolio_service.get_current_portfolio()
+        if not current_portfolio:
+            st.warning("⚠️ No active portfolio selected")
+            return
+        
+        # Portfolio header with portfolio selector on the right
+        header_col1, header_col2 = st.columns([3, 1])
+        
+        with header_col1:
+            # Don't add title here - it's in app.py
+            pass
+        
+        with header_col2:
+            # Render portfolio selector inline
+            _render_portfolio_selector_inline()
+        
+        # No portfolio stats here - they're shown below in the main dashboard
+        st.markdown("---")
+        
+    except Exception as e:
+        # Fail gracefully - portfolio context is informational
+        st.caption("Portfolio information unavailable")
+
+
+def _render_portfolio_selector_inline() -> None:
+    """Render a compact portfolio selector for the dashboard header."""
+    try:
+        from services.portfolio_service import portfolio_service
+        
+        # Get available portfolios
+        portfolios = portfolio_service.get_all_active_portfolios()
+        if len(portfolios) <= 1:
+            # Only show selector if there are multiple portfolios
+            return
+        
+        # Create options for selectbox
+        options = [(p.name, p.id) for p in portfolios]
+        portfolio_names = [name for name, _ in options]
+        portfolio_ids = [pid for _, pid in options]
+        
+        # Get current selection
+        current_portfolio = portfolio_service.get_current_portfolio()
+        current_index = 0
+        if current_portfolio:
+            try:
+                current_index = portfolio_ids.index(current_portfolio.id)
+            except ValueError:
+                current_index = 0
+        
+        # Render compact selectbox
+        selected_name = st.selectbox(
+            "",  # No label
+            options=portfolio_names,
+            index=current_index,
+            key="dashboard_portfolio_selector",
+            help="Switch active portfolio",
+            label_visibility="collapsed"
+        )
+        
+        # Handle selection change
+        if selected_name:
+            selected_id = portfolio_ids[portfolio_names.index(selected_name)]
+            current_id = current_portfolio.id if current_portfolio else None
+            
+            if selected_id != current_id:
+                portfolio_service.set_current_portfolio(selected_id)
+                st.rerun()
+                
+    except Exception:
+        # Fail silently if portfolio selector cannot be rendered
+        pass
+
+
 def fmt_currency(val: float) -> str:
     """Format value as currency."""
     try:
@@ -80,6 +158,31 @@ def highlight_stop(row: pd.Series) -> list:
             for _ in range(len(row))
         ]
     except (KeyError, TypeError):
+        return [""] * len(row)
+
+
+def highlight_stop_improved(row: pd.Series) -> list:
+    """Improved highlight function for stop loss breaches with better error handling."""
+    try:
+        # Check if we have the required columns and valid data
+        if "Current Price" not in row or "Stop Loss" not in row:
+            return [""] * len(row)
+        
+        current_price = row["Current Price"]
+        stop_loss = row["Stop Loss"]
+        
+        # Check for valid numeric values
+        if pd.isna(current_price) or pd.isna(stop_loss):
+            return [""] * len(row)
+        
+        # Only highlight if current price is actually below stop loss
+        if isinstance(current_price, (int, float)) and isinstance(stop_loss, (int, float)):
+            if current_price < stop_loss:
+                return ["background-color: #ffcccc"] * len(row)
+        
+        return [""] * len(row)
+    except Exception:
+        # If anything goes wrong, return no styling
         return [""] * len(row)
 
 
@@ -176,6 +279,9 @@ def render_dashboard() -> None:
             st.session_state.pop("start_cash", None)
             st.rerun()
     else:
+        # Display current portfolio context
+        _render_portfolio_context()
+        
         summary_df = save_portfolio_snapshot(st.session_state.portfolio, st.session_state.cash)
 
         summary_df = summary_df.rename(
@@ -438,15 +544,20 @@ def render_dashboard() -> None:
 
             numeric_display = list(formatters.keys())
 
+            # Apply basic styling without any background highlighting
             styled = port_table.style.format(formatters).set_properties(
                 subset=numeric_display, **{"text-align": "right"}
             )
-            # Pandas Styler.applymap deprecated -> use .map (element-wise) for new versions
+            # Only apply text color changes, no background colors
             if "Pct Change" in port_table:
                 styled = styled.map(highlight_pct, subset=["Pct Change"])  # type: ignore[attr-defined]
             if "PnL" in port_table:
                 styled = styled.map(color_pnl, subset=["PnL"])  # type: ignore[attr-defined]
-            styled = styled.apply(highlight_stop, axis=1).set_table_styles(
+            
+            # REMOVED: All background highlighting functions to fix red background issue
+            # The stop loss highlighting was causing the red background problem
+            
+            styled = styled.set_table_styles(
                 [
                     {
                         "selector": "th",
@@ -566,6 +677,25 @@ def render_dashboard() -> None:
                     except Exception:
                         cash_balance = 0.0
 
+                # Get current portfolio context for summary
+                portfolio_service = PortfolioService()
+                try:
+                    current_portfolio = portfolio_service.get_current_portfolio()
+                    portfolio_context = {
+                        "name": current_portfolio.name,
+                        "strategy": current_portfolio.strategy,
+                        "benchmark_symbol": current_portfolio.benchmark_symbol,
+                        "description": current_portfolio.description,
+                    }
+                except Exception:
+                    # Fallback for backward compatibility
+                    portfolio_context = {
+                        "name": "Default Portfolio",
+                        "strategy": "Growth",
+                        "benchmark_symbol": "SPY",
+                        "description": "Main portfolio",
+                    }
+
                 payload = {
                     "asOfDate": datetime.now().strftime("%Y-%m-%d"),
                     "cashBalance": cash_balance,
@@ -573,6 +703,7 @@ def render_dashboard() -> None:
                     "summaryFrame": summary_df.copy(),
                     "history": history.copy(),
                     "notes": {"materialNewsToday": "N/A", "catalystNotes": []},
+                    "portfolio": portfolio_context,
                 }
                 st.session_state.daily_summary = render_daily_portfolio_summary(payload)
             else:
