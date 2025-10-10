@@ -1,8 +1,8 @@
 """
-Portfolio management service for multi-portfolio operations.
+Portfolio management service - simplified for single portfolio.
 
-This service provides high-level operations for managing multiple portfolios
-while maintaining backward compatibility with existing single-portfolio code.
+This service provides portfolio operations for a single default portfolio.
+Maintains backward compatibility while removing multi-portfolio complexity.
 """
 
 from __future__ import annotations
@@ -16,39 +16,47 @@ from infra.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Default portfolio ID for single portfolio mode
+DEFAULT_PORTFOLIO_ID = 1
+
 
 class PortfolioService:
     """High-level service for portfolio management operations."""
     
     def __init__(self):
         self.repository = PortfolioRepository()
+        self._ensure_default_portfolio_exists()
+    
+    def _ensure_default_portfolio_exists(self):
+        """Ensure the default portfolio exists."""
+        portfolio = self.repository.get_portfolio_by_id(DEFAULT_PORTFOLIO_ID)
+        if not portfolio:
+            # Create default portfolio
+            default_portfolio = Portfolio(
+                id=DEFAULT_PORTFOLIO_ID,
+                name="My Portfolio",
+                description="Primary investment portfolio",
+                strategy_type="Micro-Cap Growth",
+                benchmark_symbol="^RUT",
+                is_active=True,
+                is_default=True
+            )
+            self.repository.create_portfolio(default_portfolio)
+            logger.info("Created default portfolio")
     
     def get_all_active_portfolios(self) -> List[Portfolio]:
-        """Get all active portfolios for selection."""
-        portfolios = self.repository.get_all_portfolios()
-        return [p for p in portfolios if p.is_active]
+        """Get all active portfolios - returns single default portfolio."""
+        portfolio = self.get_current_portfolio()
+        return [portfolio] if portfolio else []
     
     def get_current_portfolio(self) -> Optional[Portfolio]:
-        """Get the currently selected portfolio."""
-        # For backward compatibility, check session state first, then default
-        current_id = self._get_session_portfolio_id()
-        return self.repository.get_portfolio_by_id(current_id)
+        """Get the current (default) portfolio."""
+        return self.repository.get_portfolio_by_id(DEFAULT_PORTFOLIO_ID)
     
     def set_current_portfolio(self, portfolio_id: int) -> bool:
-        """Set the currently selected portfolio and reload session data."""
-        portfolio = self.repository.get_portfolio_by_id(portfolio_id)
-        if portfolio and portfolio.is_active:
-            self._set_session_portfolio_id(portfolio_id)
-            
-            # Reload portfolio data from database for the new portfolio
-            self._reload_portfolio_session_data(portfolio_id)
-            
-            logger.info(f"Switched to portfolio: {portfolio.name}", extra={
-                "portfolio_id": portfolio_id,
-                "portfolio_name": portfolio.name
-            })
-            return True
-        return False
+        """Set current portfolio - simplified to always use default."""
+        # For backward compatibility, just return True
+        return True
     
     def _reload_portfolio_session_data(self, portfolio_id: int) -> None:
         """Reload session state portfolio data for the specified portfolio."""
@@ -164,8 +172,6 @@ def ensure_portfolio_context_in_queries() -> int:
     """
     Helper function to get the current portfolio ID for database queries.
     
-    This maintains backward compatibility by defaulting to portfolio ID 1
-    while enabling multi-portfolio support when ready.
+    Simplified to always return DEFAULT_PORTFOLIO_ID for single portfolio mode.
     """
-    context = get_current_portfolio_context()
-    return context["portfolio_id"]
+    return DEFAULT_PORTFOLIO_ID

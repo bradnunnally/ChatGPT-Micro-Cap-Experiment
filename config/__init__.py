@@ -1,50 +1,74 @@
-"""Configuration package initializer.
+"""Unified configuration package.
 
-This package coexists with a legacy top-level ``config.py`` module that defines
-constants used widely across the codebase and tests (for example, ``COL_TICKER``,
-``TODAY``, etc.). To preserve backward compatibility with imports like
-``from config import COL_TICKER`` while also supporting ``from config.settings import settings``,
-we dynamically load the top-level ``config.py`` and re-export its public names here.
+This package provides centralized configuration for the Portfolio Management System.
+All application settings, constants, and provider factories are exported from here.
+
+Usage:
+    from config import settings, get_provider, COL_TICKER
+    
+    # Access settings
+    db_path = settings.db_file
+    api_key = settings.finnhub_api_key
+    
+    # Get market data provider
+    provider = get_provider()
+    
+    # Use column constants
+    df[COL_TICKER] = tickers
 """
 
 from __future__ import annotations
 
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
-from types import ModuleType
-from typing import List
+# Import and re-export everything from settings (includes legacy constants)
+from .settings import (
+    settings,
+    Settings,
+    Paths,
+    # Column constants
+    COL_TICKER,
+    COL_SHARES,
+    COL_PRICE,
+    COL_COST,
+    COL_STOP,
+    COL_CURRENT,
+    COL_GAIN_LOSS,
+    COL_GAIN_LOSS_PCT,
+    TODAY,
+)
 
-# Attempt to locate the top-level legacy_config.py beside the repository root.
-_root = Path(__file__).resolve().parent.parent
-_legacy_path = _root / "legacy_config.py"
+# Import and re-export provider functions
+from .providers import (
+    get_provider,
+    is_dev_stage,
+    resolve_environment,
+    bootstrap_defaults,
+    AppConfig,
+    MarketDataProvider,
+)
 
-__all__: List[str] = []
-if _legacy_path.exists():
-    _spec = spec_from_file_location("_legacy_config", _legacy_path)
-    if _spec and _spec.loader:  # pragma: no branch
-        _legacy: ModuleType = module_from_spec(_spec)
-        _spec.loader.exec_module(_legacy)  # type: ignore[arg-type]
-        legacy_public = [n for n in dir(_legacy) if not n.startswith("_")]
-        globals().update({n: getattr(_legacy, n) for n in legacy_public})
-        __all__.extend(legacy_public)
-
-from .settings import settings  # re-export user settings
-from . import providers as _providers
-
-AppConfig = _providers.AppConfig
-resolve_environment = _providers.resolve_environment
-get_provider = _providers.get_provider
-bootstrap_defaults = _providers.bootstrap_defaults
-is_dev_stage = _providers.is_dev_stage
-
-__all__.extend([
+__all__ = [
+    # Settings
     "settings",
-    "AppConfig",
-    "resolve_environment",
+    "Settings", 
+    "Paths",
+    # Column constants (for backward compatibility)
+    "COL_TICKER",
+    "COL_SHARES",
+    "COL_PRICE",
+    "COL_COST",
+    "COL_STOP",
+    "COL_CURRENT",
+    "COL_GAIN_LOSS",
+    "COL_GAIN_LOSS_PCT",
+    "TODAY",
+    # Provider functions
     "get_provider",
-    "bootstrap_defaults",
     "is_dev_stage",
-])
+    "resolve_environment",
+    "bootstrap_defaults",
+    "AppConfig",
+    "MarketDataProvider",
+]
 
 # Keep settings submodule available via `from config.settings import settings`.
 # No explicit import here to avoid import-time side effects; normal submodule

@@ -68,3 +68,12 @@ archive/
 
 # === Local snapshot releases ===
 dist/
+
+# === Test Coverage Reports ===
+htmlcov/
+.coverage
+coverage.xml
+
+# === Build Artifacts ===
+build/
+*.egg-info/

@@ -14,7 +14,8 @@ import pandas as pd
 
 from dotenv import load_dotenv
 
-from micro_data_providers import (
+# Import from new location (providers moved to services/providers/)
+from services.providers.finnhub import (
     MarketDataProvider,
     SyntheticDataProviderExt,
     FinnhubDataProvider,

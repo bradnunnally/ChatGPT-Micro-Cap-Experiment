@@ -103,14 +103,16 @@ def watchlist_page():
             if price is None or pd.isna(price):
                 continue
 
-            change_pct = None
+            change_pct = row.get("change_pct")
             row_cols = st.columns([3, 2, 2, 1, 1])
             row_cols[0].write(ticker)
             row_cols[1].write(f"${float(price):.2f}")
-            if change_pct is None:
+            if change_pct is None or pd.isna(change_pct):
                 row_cols[2].write("-")
             else:
-                row_cols[2].write(f"{change_pct:.2f}%")
+                color = "green" if change_pct >= 0 else "red"
+                sign = "+" if change_pct >= 0 else ""
+                row_cols[2].markdown(f":{color}[{sign}{change_pct:.2f}%]")
             if row_cols[3].button("❌", key=f"del_{ticker}"):
                 remove_from_watchlist(ticker)
                 st.rerun()
